@@ -113,5 +113,5 @@ export class UnreachableError extends HTTPError {
 
 export type ErrorWithStatus = {
 	status: number;
-	[key: string]: unknown; // Optional, to allow other properties
-};
+	[key: string]: unknown;
+}

@@ -160,7 +160,7 @@ export class Router {
 			}
 			response = await handlers[path](ctx, request);
 		} catch (e: unknown) {
-			let status = 500; // Default status if not HTTPError
+			let status = 500;
 
 			if (isHTTPError(e)) {
 				status = e.status;
