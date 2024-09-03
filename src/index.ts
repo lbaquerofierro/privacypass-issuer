@@ -225,12 +225,20 @@ const handleClearKey = async (ctx: Context, _request?: Request) => {
 		}
 	}
 	const toDeleteArray = [...toDelete];
-	await ctx.bucket.ISSUANCE_KEYS.delete(toDeleteArray);
+
+	if (toDeleteArray.length > 0) {
+		await ctx.bucket.ISSUANCE_KEYS.delete(toDeleteArray);
+	}
 
 	ctx.waitUntil(clearDirectoryCache());
 
-	return new Response(`Keys cleared: ${toDeleteArray.join('\n')}`, { status: 201 });
+	return new Response(
+		`Keys cleared: ${toDeleteArray.length > 0 ? toDeleteArray.join('\n') : 'None'}`,
+		{ status: 201 }
+	);
 };
+
+
 
 export default {
 	async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
