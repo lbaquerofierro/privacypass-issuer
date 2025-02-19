@@ -45,15 +45,8 @@ interface StorageMetadata extends Record<string, string> {
 	tokenKeyID: string;
 }
 
-export const handleTokenRequest = async (ctx: Context, request: Request) => {
-	ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? RELEASE });
-	const contentType = request.headers.get('content-type');
-	if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
-		throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
-	}
-
-	const buffer = await request.arrayBuffer();
-	const tokenRequest = TokenRequest.deserialize(new Uint8Array(buffer));
+const issue = async (ctx: Context, request: ArrayBufferLike): Promise<ArrayBufferLike> => {
+	const tokenRequest = TokenRequest.deserialize(new Uint8Array(request));
 
 	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
 		throw new InvalidTokenTypeError();
@@ -118,16 +111,23 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 		};
 	});
 
-	const domain = new URL(request.url).host;
+	const domain = ctx.hostname;
 	const issuer = new Issuer(BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
 	const signedToken = await issuer.issue(tokenRequest);
 	ctx.metrics.signedTokenTotal.inc({ key_id: keyID });
+	return signedToken.serialize();
+};
 
-	// too verbose with workers observability
-	// once there is a way to filter logpush based on log level, we can consider re-enabling
-	// console.debug(`Token issued successfully for key ${keyID}`);
+export const handleTokenRequest = async (ctx: Context, request: Request) => {
+	ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? RELEASE });
+	const contentType = request.headers.get('content-type');
+	if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
+		throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
+	}
 
-	return new Response(signedToken.serialize(), {
+	const signedToken = await issue(ctx, await request.arrayBuffer());
+
+	return new Response(signedToken, {
 		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
 	});
 };
@@ -141,7 +141,7 @@ export const handleHeadTokenDirectory = async (ctx: Context, request: Request) =
 	});
 };
 
-export const handleTokenDirectory = async (ctx: Context, request: Request, isRCP?: boolean) => {
+export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 	const cache = await getDirectoryCache();
 	let cachedResponse: Response | undefined;
 	try {
@@ -181,7 +181,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request, isRCP
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
@@ -314,7 +314,6 @@ export const handleClearKey = async (ctx: Context, _request?: Request) => {
 	return new Response(`Keys cleared: ${toDeleteArray.join('\n')}`, { status: 201 });
 };
 
-
 const VALID_PATHS = new Set([
 	'/.well-known/token-issuer-directory',
 	'/token-request',
@@ -325,6 +324,21 @@ const VALID_PATHS = new Set([
 ]);
 
 export class IssuerHandler extends WorkerEntrypoint<Bindings> {
+	private context(url: string): Context {
+		const env = this.env;
+		const ectx = this.ctx;
+
+		const sampleRequest = new Request(url);
+		return new Context(
+			sampleRequest,
+			env,
+			ectx.waitUntil.bind(ectx),
+			new ConsoleLogger(),
+			new MetricsRegistry(env),
+			new WshimLogger(sampleRequest, env)
+		);
+	}
+
 	async fetch(request: Request): Promise<Response> {
 		const router = new Router(VALID_PATHS);
 
@@ -339,11 +353,19 @@ export class IssuerHandler extends WorkerEntrypoint<Bindings> {
 			this.env,
 			this.ctx
 		);
-
 	}
 
-	async add(a: number, b: number) {
-		return a + b;
+	// using url here. for tracing, we may want to pass other options
+	async issue(url: string, tokenRequest: ArrayBufferLike): Promise<ArrayBufferLike> {
+		const ctx = this.context(url);
+		return issue(ctx, tokenRequest);
+	}
+
+	async tokenDirectory(url: string): Promise<IssuerConfigurationResponse> {
+		const ctx = this.context(url);
+		const sampleRequest = new Request(url); // this ios a sample request because it does not include headers such as etag for instance. might not be relevant
+		const response = await handleTokenDirectory(ctx, sampleRequest);
+		return response.json();
 	}
 }
 
@@ -373,7 +395,6 @@ export default {
 		}
 	},
 };
-
 
 export { Router } from './router';
 export { Context } from './context';
