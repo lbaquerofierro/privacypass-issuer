@@ -3,28 +3,8 @@
 	"version": "0.1.0",
 	"type": "module",
 	"main": "dist/worker.mjs",
-	"types": "dist/types/index.d.ts",
 	"license": "Apache-2.0",
 	"private": true,
-	"files": [ "dist"] ,
-	"exports": {
-		".": {
-			"import": "./dist/worker.mjs",
-			"types": "./dist/index.d.ts"
-		},
-		"./router": {
-			"import": "./dist/worker.mjs",
-			"types": "./dist/router.d.ts"
-		},
-		"./context": {
-			"import": "./dist/worker.mjs",
-			"types": "./dist/context/index.d.ts"
-		},
-		"./bindings": {
-			"import": "./dist/worker.mjs",
-			"types": "./dist/bindings.d.ts"
-		}
-	},
 	"scripts": {
 		"build": "tsc && node scripts/cli.js build",
 		"deploy:production": "wrangler deploy --no-bundle --env production",
@@ -55,13 +35,13 @@
 	},
 	"devDependencies": {
 		"@cloudflare/blindrsa-ts": "0.3.2",
-		"@cloudflare/workers-types": "^4.20250129.0",
+		"@cloudflare/workers-types": "4.20240605.0",
 		"@types/jest": "29.5.11",
 		"@typescript-eslint/eslint-plugin": "6.21.0",
 		"@typescript-eslint/parser": "6.21.0",
 		"commander": "12.1.0",
 		"dotenv": "16.4.0",
-		"esbuild": "0.21.5",
+		"esbuild": "0.25.0",
 		"eslint": "8.56.0",
 		"eslint-config-prettier": "9.1.0",
 		"eslint-config-typescript": "3.0.0",
