@@ -3,29 +3,14 @@
 		"noEmit": true,
 		"module": "esnext",
 		"target": "es2020",
-		"lib": [
-			"es2020"
-		],
+		"lib": ["es2020"],
 		"strict": true,
 		"preserveConstEnums": true,
-		"moduleResolution": "bundler",
+		"moduleResolution": "node",
 		"sourceMap": true,
-		"types": [
-			"@cloudflare/workers-types"
-		],
-		// "paths": {
-		// 	"@cloudflare/privacypass-ts": [
-		// 		"./node_modules/@cloudflare/privacypass-ts"
-		// 	]
-		// },
+		"types": ["@cloudflare/workers-types"],
 		"esModuleInterop": true
 	},
-	"include": [
-		"src"
-	],
-	"exclude": [
-		"node_modules",
-		"dist",
-		"test"
-	]
+	"include": ["src"],
+	"exclude": ["node_modules", "dist", "test"]
 }

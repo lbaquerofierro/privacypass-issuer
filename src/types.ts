@@ -15,6 +15,12 @@ export type IssuerTokenKey = {
 	'not-before'?: number;
 };
 
+export type IssuerConfiguration = {
+	publicKeyEnc: Uint8Array;
+	publicKey: CryptoKey;
+	url: string;
+}
+
 // https://www.ietf.org/archive/id/draft-ietf-privacypass-protocol-10.html#name-token-type-registry-updates-2
 // https://www.ietf.org/archive/id/draft-ietf-privacypass-rate-limit-tokens-02.html#name-iana-considerations
 export enum TokenType {

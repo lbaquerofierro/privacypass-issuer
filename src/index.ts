@@ -20,6 +20,7 @@ import {
 	arbitraryBatched,
 	util,
 	getIssuerUrl,
+	tokenRequestToTokenTypeEntry,
 } from '@cloudflare/privacypass-ts';
 import { ConsoleLogger, WshimLogger } from './context/logging';
 import { KeyError, MetricsRegistry } from './context/metrics';
@@ -30,10 +31,11 @@ import {
 	clearDirectoryCache,
 	getDirectoryCache,
 } from './cache';
-const { BlindRSAMode, Issuer, TokenRequest } = publicVerif;
-// const { BatchedTokenRequest, BatchedTokenResponse } = arbitraryBatched;
-
+const { Issuer, TokenRequest } = publicVerif;
+const { BatchedTokenRequest, BatchedTokenResponse, Issuer: BatchedTokensIssuer } = arbitraryBatched;
 import { shouldRotateKey, shouldClearKey } from './utils/keyRotation';
+import { getPublicKeyBytes } from '@cloudflare/privacypass-ts/lib/src/pub_verif_token';
+type BlindRSAMode = publicVerif.BlindRSAMode;
 
 const keyToTokenKeyID = async (key: Uint8Array): Promise<number> => {
 	const hash = await crypto.subtle.digest('SHA-256', key);
@@ -47,6 +49,7 @@ interface StorageMetadata extends Record<string, string> {
 	tokenKeyID: string;
 }
 
+
 export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? RELEASE });
 	const contentType = request.headers.get('content-type');
@@ -58,6 +61,7 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	if (contentType == MediaType.PRIVATE_TOKEN_REQUEST) {
 		return handleSingleTokenRequest(ctx, request);
 	} else if (contentType == MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST) {
+		// TODO: remember that if content-type is not correct I need to return "Invalid content type", { status: 422 }
 		return handleBatchedTokenRequest(ctx, request);
 	} else {
 		throw new HeaderNotDefinedError(`"Content-Type" must be either "${MediaType.PRIVATE_TOKEN_REQUEST}" or "${MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST}"`);
@@ -66,13 +70,90 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 
 const handleSingleTokenRequest = async (ctx: Context, request: Request) => {
 	const buffer = await request.arrayBuffer();
+
+	// TODO: Verify this TokenRequest works for both batched and non-batched, otherwise import/use correct one for each
+	// maybe I have to figure it out in the caller of this function
 	const tokenRequest = TokenRequest.deserialize(TOKEN_TYPES.BLIND_RSA, new Uint8Array(buffer));
 
-	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
+	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) { // TODO: Also include this in batched version
 		throw new InvalidTokenTypeError();
 	}
 
 	const keyID = tokenRequest.truncatedTokenKeyId.toString();
+	const { sk, pk } = await getKeyPair(ctx, keyID);
+
+	// TODO: Since this is the only allowed mode currently, put it in a const
+	const mode = publicVerif.BlindRSAMode.PSS;
+	const domain = new URL(request.url).hostname;
+	const issuer = new publicVerif.Issuer(mode, domain, sk, pk, { supportsRSARAW: true });
+
+	const signedToken = await issuer.issue(tokenRequest);
+	ctx.metrics.signedTokenTotal.inc({ key_id: keyID }); // TODO: label to know it is a single token? 
+
+	// too verbose with workers observability
+	// once there is a way to filter logpush based on log level, we can consider re-enabling
+	// console.debug(`Token issued successfully for key ${keyID}`);
+
+	return new Response(signedToken.serialize(), {
+		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
+	});
+};
+const handleBatchedTokenRequest = async (ctx: Context, request: Request): Promise<Response> => {
+	// try {
+	// 	const buffer = await request.arrayBuffer();
+	// 	const batchedTokenRequest = BatchedTokenRequest.deserialize(new Uint8Array(buffer));
+
+	// 	// Validate that all token requests have the same key ID and correct token type
+	// 	const keyIds = new Set<number>();
+	// 	for (const tokenRequest of batchedTokenRequest.tokenRequests) {
+	// 		if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
+	// 			throw new InvalidTokenTypeError();
+	// 		}
+	// 		keyIds.add(tokenRequest.truncatedTokenKeyId);
+	// 		if (keyIds.size > 1) {
+	// 			throw new Error("Batched token request must have the same key ID");
+	// 		}
+	// 	}
+
+	// 	const firstKey = keyIds.values().next();
+	// 	if (firstKey.done || firstKey.value === undefined) {
+	// 		throw new Error("No valid key ID found in batched token request.");
+	// 	}
+	// 	const keyID = firstKey.value.toString();
+
+	// 	const { sk, pk } = await getKeyPair(ctx, keyID);
+	// 	const domain = new URL(request.url).host;
+
+	// 	// We only support type 2 (Blind RSA, e.g. PSS) for now
+	// 	const issuer = new Issuer(publicVerif.BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
+	// 	const batchedTokenIssuer = new BatchedTokensIssuer(issuer);
+	// 	const batchedTokenResponse = await batchedTokenIssuer.issue(batchedTokenRequest);
+
+	// 	const responseBytes = batchedTokenResponse.serialize();
+
+	// 	// Determine if any token response is empty (null) and choose the proper status code:
+	// 	// If at least one token request failed, return HTTP 206 (Partial Content), otherwise 200.
+	// 	const partial = batchedTokenResponse.tokenResponses.some((resp) => resp.tokenResponse === null);
+	// 	const status = partial ? 206 : 200;
+
+	// 	return new Response(responseBytes, {
+	// 		status,
+	// 		headers: {
+	// 			"Content-Type": "application/private-token-arbitrary-batch-response",
+	// 			"Content-Length": responseBytes.length.toString(),
+	// 		},
+	// 	});
+	// } catch (e) {
+	// 	// For deserialization or processing errors, respond with HTTP 422 (Unprocessable Content)
+	// 	return new Response(`Error processing batched token request: ${e}`, { status: 422 });
+	// }
+
+	return new Response('Batched token request not supported', { status: 501 });
+};
+
+
+const getKeyPair = async (ctx: Context, keyID: string) => {
+	const cryptoKeyCache = new InMemoryCryptoKeyCache(ctx);
 	const key = await ctx.bucket.ISSUANCE_KEYS.get(keyID);
 
 	if (key === null) {
@@ -82,7 +163,6 @@ const handleSingleTokenRequest = async (ctx: Context, request: Request) => {
 
 	const CRYPTO_KEY_EXPIRATION_IN_MS = 300_000; // 5min
 
-	const cryptoKeyCache = new InMemoryCryptoKeyCache(ctx);
 	const sk = await cryptoKeyCache.read(`sk-${keyID}`, async keyID => {
 		const privateKey = key.data;
 		if (privateKey === undefined) {
@@ -95,7 +175,9 @@ const handleSingleTokenRequest = async (ctx: Context, request: Request) => {
 				'pkcs8',
 				privateKey,
 				{
-					name: ctx.isTest() ? 'RSA-PSS' : 'RSA-RAW',
+					// RSA-RAW is handled directlry by blindrsa-tsst() ? 'RSA-PSS' : 'RSA-RAW',
+					// https://github.com/cloudflare/blindrsa-ts/blob/64dc207f079ca680d4db6cd5a22f5bce6f1b28e8/src/blindrsa.ts#L168
+					name: 'RSA-PSS',
 					hash: 'SHA-384',
 					length: 2048,
 				},
@@ -131,40 +213,8 @@ const handleSingleTokenRequest = async (ctx: Context, request: Request) => {
 		};
 	});
 
-	const domain = new URL(request.url).host;
-	const issuer = new Issuer(BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
-	const signedToken = await issuer.issue(tokenRequest);
-	ctx.metrics.signedTokenTotal.inc({ key_id: keyID });
-
-	// too verbose with workers observability
-	// once there is a way to filter logpush based on log level, we can consider re-enabling
-	// console.debug(`Token issued successfully for key ${keyID}`);
-
-	return new Response(signedToken.serialize(), {
-		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
-	});
-};
-
-const handleBatchedTokenRequest = async (ctx: Context, request: Request) => {
-	// const buffer = await request.arrayBuffer();
-	// const batchedTokenRequest = BatchedTokenRequest.deserialize(new Uint8Array(buffer));
-
-	// const batchedTokenResponses: BatchedTokenResponse = await processBatchedTokenRequest(ctx, batchedTokenRequest);
-
-	// const response = new Response(batchedTokenResponses.serialize(), {
-	// 	headers: { 'content-type': MediaType.ARBITRARY_BATCHED_TOKEN_RESPONSE },
-	// });
-	return new Response('Not implemented', { status: 501 });
+	return { sk, pk };
 }
-
-// const processBatchedTokenRequest = async (ctx: Context, batchedTokenRequest: BatchedTokenRequest) => {
-// 	const batchTokenResponses = await Promise.all(
-// 		batchedTokenRequest.requests.map(async (tokenRequest) => {
-// 			const signedToken = await handleSingleTokenRequest(ctx, tokenRequest);
-// 			return signedToken;
-// 		})
-// 	);
-// }
 
 export const handleHeadTokenDirectory = async (ctx: Context, request: Request) => {
 	const getResponse = await handleTokenDirectory(ctx, request);

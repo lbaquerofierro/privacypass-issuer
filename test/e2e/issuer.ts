@@ -12,7 +12,6 @@ import {
 	TOKEN_TYPES,
 	TokenChallenge,
 	publicVerif,
-	privateVerif,
 	util,
 } from '@cloudflare/privacypass-ts';
 
@@ -96,6 +95,7 @@ async function importPublicKey(spki: Uint8Array) {
 
 export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Promise<boolean> {
 	const client = new Client(BlindRSAMode.PSS);
+	const origin = new Origin(BlindRSAMode.PSS);
 
 	const redemptionContext = new Uint8Array(32);
 	redemptionContext.fill(0xfe);
@@ -128,11 +128,8 @@ export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Pro
 	);
 	const token = await client.finalize(tokenResponse);
 
-	const origin = new Origin(BlindRSAMode.PSS)
-	const isValid = await origin.verify(token, issuerPublicKey);
-
 	return (
-		isValid &&
+		(await origin.verify(token, issuerPublicKey)) &&
 		response.headers.get('Content-Type') === MediaType.PRIVATE_TOKEN_RESPONSE
 	);
 }
