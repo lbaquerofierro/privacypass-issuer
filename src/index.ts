@@ -17,7 +17,9 @@ import {
 	PRIVATE_TOKEN_ISSUER_DIRECTORY,
 	TOKEN_TYPES,
 	publicVerif,
+	arbitraryBatched,
 	util,
+	getIssuerUrl,
 } from '@cloudflare/privacypass-ts';
 import { ConsoleLogger, WshimLogger } from './context/logging';
 import { KeyError, MetricsRegistry } from './context/metrics';
@@ -29,6 +31,7 @@ import {
 	getDirectoryCache,
 } from './cache';
 const { BlindRSAMode, Issuer, TokenRequest } = publicVerif;
+// const { BatchedTokenRequest, BatchedTokenResponse } = arbitraryBatched;
 
 import { shouldRotateKey, shouldClearKey } from './utils/keyRotation';
 
@@ -47,12 +50,23 @@ interface StorageMetadata extends Record<string, string> {
 export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? RELEASE });
 	const contentType = request.headers.get('content-type');
-	if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
-		throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
+
+	if (!contentType) {
+		throw new HeaderNotDefinedError('"Content-Type" must be defined');
 	}
 
+	if (contentType == MediaType.PRIVATE_TOKEN_REQUEST) {
+		return handleSingleTokenRequest(ctx, request);
+	} else if (contentType == MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST) {
+		return handleBatchedTokenRequest(ctx, request);
+	} else {
+		throw new HeaderNotDefinedError(`"Content-Type" must be either "${MediaType.PRIVATE_TOKEN_REQUEST}" or "${MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST}"`);
+	}
+}
+
+const handleSingleTokenRequest = async (ctx: Context, request: Request) => {
 	const buffer = await request.arrayBuffer();
-	const tokenRequest = TokenRequest.deserialize(new Uint8Array(buffer));
+	const tokenRequest = TokenRequest.deserialize(TOKEN_TYPES.BLIND_RSA, new Uint8Array(buffer));
 
 	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
 		throw new InvalidTokenTypeError();
@@ -131,6 +145,27 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	});
 };
 
+const handleBatchedTokenRequest = async (ctx: Context, request: Request) => {
+	// const buffer = await request.arrayBuffer();
+	// const batchedTokenRequest = BatchedTokenRequest.deserialize(new Uint8Array(buffer));
+
+	// const batchedTokenResponses: BatchedTokenResponse = await processBatchedTokenRequest(ctx, batchedTokenRequest);
+
+	// const response = new Response(batchedTokenResponses.serialize(), {
+	// 	headers: { 'content-type': MediaType.ARBITRARY_BATCHED_TOKEN_RESPONSE },
+	// });
+	return new Response('Not implemented', { status: 501 });
+}
+
+// const processBatchedTokenRequest = async (ctx: Context, batchedTokenRequest: BatchedTokenRequest) => {
+// 	const batchTokenResponses = await Promise.all(
+// 		batchedTokenRequest.requests.map(async (tokenRequest) => {
+// 			const signedToken = await handleSingleTokenRequest(ctx, tokenRequest);
+// 			return signedToken;
+// 		})
+// 	);
+// }
+
 export const handleHeadTokenDirectory = async (ctx: Context, request: Request) => {
 	const getResponse = await handleTokenDirectory(ctx, request);
 
@@ -179,7 +214,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};

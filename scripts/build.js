@@ -26,6 +26,7 @@ export async function buildCmd(opts) {
 		sourcemap: true,
 		format: 'esm',
 		target: 'esnext',
+		// external: ['__STATIC_CONTENT_MANIFEST', '@cloudflare/privacypass-ts'],
 		external: ['__STATIC_CONTENT_MANIFEST'],
 		legalComments: 'external',
 		conditions: ['worker', 'browser'],

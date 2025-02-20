@@ -12,10 +12,11 @@ import {
 	TOKEN_TYPES,
 	TokenChallenge,
 	publicVerif,
+	privateVerif,
 	util,
 } from '@cloudflare/privacypass-ts';
 
-const { BlindRSAMode, Client, verifyToken } = publicVerif;
+const { BlindRSAMode, Client, Origin } = publicVerif;
 
 export interface MTLSConfiguration {
 	certPath: string;
@@ -127,8 +128,11 @@ export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Pro
 	);
 	const token = await client.finalize(tokenResponse);
 
+	const origin = new Origin(BlindRSAMode.PSS)
+	const isValid = await origin.verify(token, issuerPublicKey);
+
 	return (
-		(await verifyToken(BlindRSAMode.PSS, token, issuerPublicKey)) &&
+		isValid &&
 		response.headers.get('Content-Type') === MediaType.PRIVATE_TOKEN_RESPONSE
 	);
 }
