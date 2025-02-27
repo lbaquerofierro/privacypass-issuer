@@ -10,9 +10,10 @@ import {
 	InternalCacheError,
 	InvalidTokenTypeError,
 } from './errors';
-import { IssuerConfigurationResponse, TokenType } from './types';
+import { TokenType } from './types';
 import { b64ToB64URL, b64Tou8, b64URLtoB64, u8ToB64 } from './utils/base64';
 import {
+	IssuerConfig,
 	MediaType,
 	PRIVATE_TOKEN_ISSUER_DIRECTORY,
 	TOKEN_TYPES,
@@ -45,7 +46,11 @@ interface StorageMetadata extends Record<string, string> {
 	tokenKeyID: string;
 }
 
-const issue = async (ctx: Context, request: ArrayBufferLike): Promise<ArrayBufferLike> => {
+const issue = async (
+	ctx: Context,
+	request: ArrayBufferLike,
+	prefix = ''
+): Promise<ArrayBufferLike> => {
 	const tokenRequest = TokenRequest.deserialize(new Uint8Array(request));
 
 	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
@@ -53,7 +58,7 @@ const issue = async (ctx: Context, request: ArrayBufferLike): Promise<ArrayBuffe
 	}
 
 	const keyID = tokenRequest.truncatedTokenKeyId.toString();
-	const key = await ctx.bucket.ISSUANCE_KEYS.get(keyID);
+	const key = await ctx.bucket.ISSUANCE_KEYS.get(prefix + keyID);
 
 	if (key === null) {
 		ctx.metrics.issuanceKeyErrorTotal.inc({ key_id: keyID, type: KeyError.NOT_FOUND });
@@ -141,7 +146,7 @@ export const handleHeadTokenDirectory = async (ctx: Context, request: Request) =
 	});
 };
 
-export const handleTokenDirectory = async (ctx: Context, request: Request) => {
+export const handleTokenDirectory = async (ctx: Context, request: Request, prefix = '') => {
 	const cache = await getDirectoryCache();
 	let cachedResponse: Response | undefined;
 	try {
@@ -162,7 +167,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 
 	ctx.metrics.directoryCacheMissTotal.inc();
 
-	const keyList = await ctx.bucket.ISSUANCE_KEYS.list({ include: ['customMetadata'] });
+	const keyList = await ctx.bucket.ISSUANCE_KEYS.list({ include: ['customMetadata'], prefix });
 
 	if (keyList.objects.length === 0) {
 		throw new Error('Issuer not initialised');
@@ -174,7 +179,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 		.sort((a, b) => new Date(b.uploaded).getTime() - new Date(a.uploaded).getTime())
 		.slice(0, freshestKeyCount);
 
-	const directory: IssuerConfigurationResponse = {
+	const directory: IssuerConfig = {
 		'issuer-request-uri': '/token-request',
 		'token-keys': keys.map(key => ({
 			'token-type': TokenType.BlindRSA,
@@ -212,7 +217,8 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 	return response;
 };
 
-export const handleRotateKey = async (ctx: Context, _request?: Request) => {
+// prefix should only be allowed on internal bindings, never on the request path
+export const handleRotateKey = async (ctx: Context, _request?: Request, prefix = '') => {
 	ctx.metrics.keyRotationTotal.inc();
 
 	// Generate a new type 2 Issuer key
@@ -240,7 +246,7 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 		// The bellow condition ensure there is no collision between truncated_token_key_id provided by the issuer
 		// This is a 1/256 with 2 keys, and 256/256 chances with 256 keys. This means an issuer cannot have more than 256 keys at the same time.
 		// Otherwise, this loop is going to be infinite. With 255 keys, this iteration might take a while.
-	} while ((await ctx.bucket.ISSUANCE_KEYS.head(tokenKeyID.toString())) !== null);
+	} while ((await ctx.bucket.ISSUANCE_KEYS.head(prefix + tokenKeyID.toString())) !== null);
 
 	const metadata: StorageMetadata = {
 		notBefore: ((Date.now() + Number.parseInt(ctx.env.KEY_NOT_BEFORE_DELAY_IN_MS)) / 1000).toFixed(
@@ -250,7 +256,7 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 		tokenKeyID: tokenKeyID.toString(),
 	};
 
-	await ctx.bucket.ISSUANCE_KEYS.put(tokenKeyID.toString(), privateKey, {
+	await ctx.bucket.ISSUANCE_KEYS.put(prefix + tokenKeyID.toString(), privateKey, {
 		customMetadata: metadata,
 	});
 
@@ -261,10 +267,10 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 	return new Response(`New key ${publicKeyEnc}`, { status: 201 });
 };
 
-export const handleClearKey = async (ctx: Context, _request?: Request) => {
+export const handleClearKey = async (ctx: Context, _request?: Request, prefix = '') => {
 	ctx.metrics.keyClearTotal.inc();
 
-	const keys = await ctx.bucket.ISSUANCE_KEYS.list({ shouldUseCache: false });
+	const keys = await ctx.bucket.ISSUANCE_KEYS.list({ shouldUseCache: false, prefix });
 
 	if (keys.objects.length === 0) {
 		return new Response('No keys to clear', { status: 201 });
@@ -355,16 +361,39 @@ export class IssuerHandler extends WorkerEntrypoint<Bindings> {
 		);
 	}
 
-	// using url here. for tracing, we may want to pass other options
-	async issue(url: string, tokenRequest: ArrayBufferLike): Promise<ArrayBufferLike> {
+	async rotateKeys(url: string, prefix: string): Promise<boolean> {
+		console.log("inside rotateKey")
 		const ctx = this.context(url);
-		return issue(ctx, tokenRequest);
+
+		const resp = await handleRotateKey(ctx, new Request(`https://${ctx.hostname}`), prefix);
+
+		// TODO: ideally we want the list of new keys
+		return resp.ok;
 	}
 
-	async tokenDirectory(url: string): Promise<IssuerConfigurationResponse> {
+	async clearKeys(url: string, prefix: string): Promise<boolean> {
+		const ctx = this.context(url);
+
+		const resp = await handleClearKey(ctx, new Request(`https://${ctx.hostname}`), prefix);
+
+		// TODO: ideally we want the list of cleared keys
+		return resp.ok;
+	}
+
+	// using url here. for tracing, we may want to pass other options
+	async issue(
+		url: string,
+		tokenRequest: ArrayBufferLike,
+		prefix: string
+	): Promise<ArrayBufferLike> {
+		const ctx = this.context(url);
+		return issue(ctx, tokenRequest, prefix);
+	}
+
+	async tokenDirectory(url: string, prefix: string): Promise<IssuerConfig> {
 		const ctx = this.context(url);
 		const sampleRequest = new Request(url); // this ios a sample request because it does not include headers such as etag for instance. might not be relevant
-		const response = await handleTokenDirectory(ctx, sampleRequest);
+		const response = await handleTokenDirectory(ctx, sampleRequest, prefix);
 		return response.json();
 	}
 }

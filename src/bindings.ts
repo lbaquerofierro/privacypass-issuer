@@ -34,6 +34,6 @@ export interface Bindings {
 	WSHIM_SOCKET?: Fetcher;
 	WSHIM_ENDPOINT: string;
 
-	// Service Bindings 
-	PRIVACYPASS_ISSUER: Service<IssuerHandler>
+	// Service Bindings
+	PRIVACYPASS_ISSUER: Service<IssuerHandler>;
 }
