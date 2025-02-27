@@ -19025,7 +19025,6 @@ var InMemoryCryptoKeyCache = class _InMemoryCryptoKeyCache {
   static {
     this.store = /* @__PURE__ */ new Map();
   }
-  // The read method tries to retrieve the cached value, refresh it if necessary, and return the cached or refreshed value
   async read(key, setValFn) {
     const refreshCache = async () => {
       const val = await setValFn(key);
@@ -25029,7 +25028,7 @@ async function handleError(ctx, error, labels) {
   console.error(error.stack);
   ctx.metrics.erroredRequestsTotal.inc({
     ...labels,
-    version: ctx.env.VERSION_METADATA.id ?? "privacy-pass-issuer@v0.1.0.next-dev+700dde1"
+    version: ctx.env.VERSION_METADATA.id ?? "privacy-pass-issuer@v0.1.0.next-dev+46e4710"
   });
   const status = error.status ?? 500;
   const message = error.message || "Server Error";
@@ -25201,7 +25200,7 @@ var Router = class {
         dsn: env.SENTRY_DSN,
         accessClientId: env.SENTRY_ACCESS_CLIENT_ID,
         accessClientSecret: env.SENTRY_ACCESS_CLIENT_SECRET,
-        release: "privacy-pass-issuer@v0.1.0.next-dev+700dde1",
+        release: "privacy-pass-issuer@v0.1.0.next-dev+46e4710",
         service: env.SERVICE,
         sampleRate: sentrySampleRate,
         coloName: request?.cf?.colo
@@ -25230,7 +25229,6 @@ var Router = class {
         throw new PageNotFoundError();
       }
       response = await handlers2[path](ctx, request);
-      console.log("The type of response is: ", typeof response);
     } catch (e) {
       let status = 500;
       if (e instanceof HTTPError) {
@@ -25288,19 +25286,13 @@ var keyToTokenKeyID = async (key) => {
   const u8 = new Uint8Array(hash);
   return u8[u8.length - 1];
 };
-var handleTokenRequest = async (ctx, request) => {
-  ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? "privacy-pass-issuer@v0.1.0.next-dev+700dde1" });
-  const contentType = request.headers.get("content-type");
-  if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
-    throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
-  }
-  const buffer = await request.arrayBuffer();
-  const tokenRequest = TokenRequest2.deserialize(new Uint8Array(buffer));
+var issue = async (ctx, request, prefix = "") => {
+  const tokenRequest = TokenRequest2.deserialize(new Uint8Array(request));
   if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
     throw new InvalidTokenTypeError();
   }
   const keyID = tokenRequest.truncatedTokenKeyId.toString();
-  const key = await ctx.bucket.ISSUANCE_KEYS.get(keyID);
+  const key = await ctx.bucket.ISSUANCE_KEYS.get(prefix + keyID);
   if (key === null) {
     ctx.metrics.issuanceKeyErrorTotal.inc({ key_id: keyID, type: KeyError.NOT_FOUND });
     throw new BadTokenKeyRequestedError("No key found for the requested key id");
@@ -25353,11 +25345,20 @@ var handleTokenRequest = async (ctx, request) => {
       expiration: new Date(Date.now() + CRYPTO_KEY_EXPIRATION_IN_MS)
     };
   });
-  const domain = new URL(request.url).host;
+  const domain = ctx.hostname;
   const issuer = new Issuer2(BlindRSAMode2.PSS, domain, sk, pk, { supportsRSARAW: true });
   const signedToken = await issuer.issue(tokenRequest);
   ctx.metrics.signedTokenTotal.inc({ key_id: keyID });
-  return new Response(signedToken.serialize(), {
+  return signedToken.serialize();
+};
+var handleTokenRequest = async (ctx, request) => {
+  ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? "privacy-pass-issuer@v0.1.0.next-dev+46e4710" });
+  const contentType = request.headers.get("content-type");
+  if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
+    throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
+  }
+  const signedToken = await issue(ctx, await request.arrayBuffer());
+  return new Response(signedToken, {
     headers: { "content-type": MediaType.PRIVATE_TOKEN_RESPONSE }
   });
 };
@@ -25368,7 +25369,7 @@ var handleHeadTokenDirectory = async (ctx, request) => {
     headers: getResponse.headers
   });
 };
-var handleTokenDirectory = async (ctx, request, isRCP) => {
+var handleTokenDirectory = async (ctx, request, prefix = "") => {
   const cache = await getDirectoryCache();
   let cachedResponse;
   try {
@@ -25387,7 +25388,7 @@ var handleTokenDirectory = async (ctx, request, isRCP) => {
     return cachedResponse;
   }
   ctx.metrics.directoryCacheMissTotal.inc();
-  const keyList = await ctx.bucket.ISSUANCE_KEYS.list({ include: ["customMetadata"] });
+  const keyList = await ctx.bucket.ISSUANCE_KEYS.list({ include: ["customMetadata"], prefix });
   if (keyList.objects.length === 0) {
     throw new Error("Issuer not initialised");
   }
@@ -25398,7 +25399,6 @@ var handleTokenDirectory = async (ctx, request, isRCP) => {
     "token-keys": keys.map((key) => ({
       "token-type": 2 /* BlindRSA */,
       "token-key": key.customMetadata.publicKey,
-      // this is how to extract the custom metadata
       "not-before": Number.parseInt(
         key.customMetadata.notBefore ?? (new Date(key.uploaded).getTime() / 1e3).toFixed(0)
       )
@@ -25426,7 +25426,7 @@ var handleTokenDirectory = async (ctx, request, isRCP) => {
   ctx.waitUntil(cache.put(DIRECTORY_CACHE_REQUEST(ctx.hostname), toCacheResponse));
   return response;
 };
-var handleRotateKey = async (ctx, _request) => {
+var handleRotateKey = async (ctx, _request, prefix = "") => {
   ctx.metrics.keyRotationTotal.inc();
   let publicKeyEnc;
   let tokenKeyID;
@@ -25449,7 +25449,7 @@ var handleRotateKey = async (ctx, _request) => {
     publicKeyEnc = b64ToB64URL(u8ToB64(rsaSsaPssPublicKey));
     tokenKeyID = await keyToTokenKeyID(rsaSsaPssPublicKey);
     privateKey = await crypto.subtle.exportKey("pkcs8", keypair.privateKey);
-  } while (await ctx.bucket.ISSUANCE_KEYS.head(tokenKeyID.toString()) !== null);
+  } while (await ctx.bucket.ISSUANCE_KEYS.head(prefix + tokenKeyID.toString()) !== null);
   const metadata = {
     notBefore: ((Date.now() + Number.parseInt(ctx.env.KEY_NOT_BEFORE_DELAY_IN_MS)) / 1e3).toFixed(
       0
@@ -25458,16 +25458,16 @@ var handleRotateKey = async (ctx, _request) => {
     publicKey: publicKeyEnc,
     tokenKeyID: tokenKeyID.toString()
   };
-  await ctx.bucket.ISSUANCE_KEYS.put(tokenKeyID.toString(), privateKey, {
+  await ctx.bucket.ISSUANCE_KEYS.put(prefix + tokenKeyID.toString(), privateKey, {
     customMetadata: metadata
   });
   ctx.waitUntil(clearDirectoryCache(ctx));
   ctx.wshimLogger.log(`Key rotated successfully, new key ${tokenKeyID}`);
   return new Response(`New key ${publicKeyEnc}`, { status: 201 });
 };
-var handleClearKey = async (ctx, _request) => {
+var handleClearKey = async (ctx, _request, prefix = "") => {
   ctx.metrics.keyClearTotal.inc();
-  const keys = await ctx.bucket.ISSUANCE_KEYS.list({ shouldUseCache: false });
+  const keys = await ctx.bucket.ISSUANCE_KEYS.list({ shouldUseCache: false, prefix });
   if (keys.objects.length === 0) {
     return new Response("No keys to clear", { status: 201 });
   }
@@ -25513,6 +25513,19 @@ var VALID_PATHS = /* @__PURE__ */ new Set([
   PRIVATE_TOKEN_ISSUER_DIRECTORY
 ]);
 var IssuerHandler = class extends WorkerEntrypoint {
+  context(url) {
+    const env = this.env;
+    const ectx = this.ctx;
+    const sampleRequest = new Request(url);
+    return new Context(
+      sampleRequest,
+      env,
+      ectx.waitUntil.bind(ectx),
+      new ConsoleLogger(),
+      new MetricsRegistry(env),
+      new WshimLogger(sampleRequest, env)
+    );
+  }
   async fetch(request) {
     const router = new Router(VALID_PATHS);
     router.get(PRIVATE_TOKEN_ISSUER_DIRECTORY, handleTokenDirectory).post("/token-request", handleTokenRequest).post("/admin/rotate", handleRotateKey).post("/admin/clear", handleClearKey);
@@ -25522,8 +25535,26 @@ var IssuerHandler = class extends WorkerEntrypoint {
       this.ctx
     );
   }
-  async add(a, b) {
-    return a + b;
+  async rotateKeys(url, prefix) {
+    const ctx = this.context(url);
+    const resp = await handleRotateKey(ctx, new Request(`https://${ctx.hostname}`), prefix);
+    return resp.ok;
+  }
+  async clearKeys(url, prefix) {
+    const ctx = this.context(url);
+    const resp = await handleClearKey(ctx, new Request(`https://${ctx.hostname}`), prefix);
+    return resp.ok;
+  }
+  // using url here. for tracing, we may want to pass other options
+  async issue(url, tokenRequest, prefix) {
+    const ctx = this.context(url);
+    return issue(ctx, tokenRequest, prefix);
+  }
+  async tokenDirectory(url, prefix) {
+    const ctx = this.context(url);
+    const sampleRequest = new Request(url);
+    const response = await handleTokenDirectory(ctx, sampleRequest, prefix);
+    return response.json();
   }
 };
 var src_default = {

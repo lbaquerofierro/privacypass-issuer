@@ -17,9 +17,11 @@ export const HttpMethod = {
 	PUT: 'PUT',
 } as const;
 
-
 // TODO: We could have a "Response" factory that allows us to return responses with a more sophisticated structure.
-export type ExportedHandlerFetchHandler = (ctx: Context, request: Request) => Response | Promise<Response>;
+export type ExportedHandlerFetchHandler = (
+	ctx: Context,
+	request: Request
+) => Response | Promise<Response>;
 export type HttpMethod = (typeof HttpMethod)[keyof typeof HttpMethod];
 
 // Simple router

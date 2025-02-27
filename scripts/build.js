@@ -22,8 +22,7 @@ export async function buildCmd(opts) {
 	const release = `privacy-pass-issuer@${version}-${opts.env}+${git.short(__dirname)}`;
 	console.log(`Building ${release}`);
 	// execSync("tsc --emitDeclarationOnly --outDir dist/types", { stdio: 'inherit' });
-	execSync("tsc", { stdio: 'inherit' });
-
+	execSync('tsc', { stdio: 'inherit' });
 
 	await build({
 		bundle: true,

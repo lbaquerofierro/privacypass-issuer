@@ -1,7 +1,3 @@
-export type IssuerConfigurationResponse = {
-    'issuer-request-uri': string;
-    'token-keys': IssuerTokenKey[];
-};
 export type IssuerTokenKey = {
     'token-type': TokenType;
     'token-key': string;
