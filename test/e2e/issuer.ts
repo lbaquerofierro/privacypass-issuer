@@ -106,6 +106,8 @@ export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Pro
 		url: issuerRequestURL,
 	} = await getIssuerConfig(issuerName, mTLS);
 
+	console.log('Issuer public key:', issuerPublicKey);
+
 	const tokenRequest = await client.createTokenRequest(challenge, issuerPublicKeyEnc);
 
 	const proxyFetch = mTLS ? await fetchWithMTLS(mTLS) : fetch;

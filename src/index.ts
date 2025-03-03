@@ -59,6 +59,7 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	}
 
 	const keyID = tokenRequest.truncatedTokenKeyId.toString();
+	console.log(`Token request received for key ${keyID}`);
 	const key = await ctx.bucket.ISSUANCE_KEYS.get(keyID);
 
 	if (key === null) {
@@ -179,7 +180,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
