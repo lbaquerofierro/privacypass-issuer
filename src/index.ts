@@ -52,7 +52,7 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	}
 
 	const buffer = await request.arrayBuffer();
-	const tokenRequest = TokenRequest.deserialize(new Uint8Array(buffer));
+	const tokenRequest = TokenRequest.deserialize(publicVerif.BLIND_RSA, new Uint8Array(buffer));
 
 	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
 		throw new InvalidTokenTypeError();
@@ -81,7 +81,7 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 				'pkcs8',
 				privateKey,
 				{
-					name: ctx.isTest() ? 'RSA-PSS' : 'RSA-RAW',
+					name: 'RSA-PSS',
 					hash: 'SHA-384',
 					length: 2048,
 				},
@@ -179,7 +179,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
