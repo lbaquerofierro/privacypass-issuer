@@ -37,6 +37,8 @@ declare global {
 	interface RsaHashedImportParams extends Algorithm {
 		hash: HashAlgorithmIdentifier;
 	}
+
+	type KeyFormat = "jwk" | "pkcs8" | "raw" | "spki"
 }
 
 export {};
