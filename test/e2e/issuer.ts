@@ -1,10 +1,9 @@
 // Copyright (c) 2023 Cloudflare, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import fetch from 'node-fetch'; // using node-fetch to allow usage of client side certificate with a fetch-like API. This is not a standard webcrypto behaviour, therefore using native node fetch does not work.
+import fetch from 'node-fetch';
 import fs from 'node:fs';
 import https from 'node:https';
-
 import {
 	IssuerConfig,
 	MediaType,
@@ -20,6 +19,8 @@ const { BlindRSAMode, Client, Origin } = publicVerif;
 const { TokenRequest, Client: BatchedTokensClient, BatchedTokenResponse } = arbitraryBatched;
 import { type Token } from '@cloudflare/privacypass-ts';
 
+// ========== TYPES ==========
+
 export type IssuerConfiguration = {
 	publicKeyEnc: Uint8Array;
 	publicKey: CryptoKey;
@@ -32,10 +33,16 @@ export interface MTLSConfiguration {
 }
 
 export function base64UrlToUint8Array(base64Url: string): Uint8Array {
-	// Convert URL escaped characters to regular base64 string
-	const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+	return Uint8Array.from(atob(base64Url.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+}
 
-	return Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+function getProtocol(host: string): string {
+	return host.includes('localhost') ? 'http:' : 'https:';
+}
+
+
+async function importPublicKey(spki: Uint8Array): Promise<CryptoKey> {
+	return crypto.subtle.importKey('spki', spki, { name: 'RSA-PSS', hash: 'SHA-384' }, true, ['verify']);
 }
 
 async function fetchWithMTLS(mTLS: MTLSConfiguration): Promise<typeof fetch> {
@@ -51,23 +58,14 @@ async function fetchWithMTLS(mTLS: MTLSConfiguration): Promise<typeof fetch> {
 	return (request, init) => fetch(request, { ...init, agent });
 }
 
-function getProtocol(host: string): string {
-	return host.includes('localhost') ? 'http:' : 'https:';
-}
-
-async function getIssuerConfig(name: string, mTLS?: MTLSConfiguration) {
+async function getIssuerConfig(name: string, mTLS?: MTLSConfiguration): Promise<IssuerConfiguration> {
 	const protocol = getProtocol(name);
 	const proxyFetch = mTLS ? await fetchWithMTLS(mTLS) : fetch;
 	const response = await proxyFetch(`${protocol}//${name}${PRIVATE_TOKEN_ISSUER_DIRECTORY}`);
-	const config: IssuerConfig = (await response.json()) as IssuerConfig;
+	const config = (await response.json()) as IssuerConfig;
 
-	const token = config['token-keys'].find(
-		token => token['token-type'] == TOKEN_TYPES.BLIND_RSA.value
-	);
-
-	if (!token) {
-		throw new Error('Could not find BlindRSA token key on issuer');
-	}
+	const token = config['token-keys'].find(t => t['token-type'] === TOKEN_TYPES.BLIND_RSA.value);
+	if (!token) throw new Error('Could not find BlindRSA token key on issuer');
 
 	const publicKeyEnc = base64UrlToUint8Array(token['token-key']);
 	const publicKey = await importPublicKey(util.convertRSASSAPSSToEnc(publicKeyEnc));
@@ -79,6 +77,7 @@ async function getIssuerConfig(name: string, mTLS?: MTLSConfiguration) {
 	};
 }
 
+// Requests key rotation on the issuer.
 export async function rotateKey(issuerName: string, mTLS: MTLSConfiguration) {
 	const protocol = getProtocol(issuerName);
 	const proxyFetch = mTLS ? await fetchWithMTLS(mTLS) : fetch;
@@ -86,9 +85,7 @@ export async function rotateKey(issuerName: string, mTLS: MTLSConfiguration) {
 
 	const response = await proxyFetch(rotateURL, {
 		method: 'POST',
-		headers: {
-			'Content-Type': 'application/json',
-		},
+		headers: { 'Content-Type': 'application/json' },
 	});
 
 	if (!response.ok) {
@@ -96,50 +93,23 @@ export async function rotateKey(issuerName: string, mTLS: MTLSConfiguration) {
 	}
 }
 
-async function importPublicKey(spki: Uint8Array) {
-	return crypto.subtle.importKey('spki', spki, { name: 'RSA-PSS', hash: 'SHA-384' }, true, [
-		'verify',
-	]);
+export async function testE2E(issuerName: string, nTokens: number, requestType: string, mTLS?: MTLSConfiguration): Promise<boolean> {
+	return requestType === 'batched'
+		? testArbitraryBatchedRequest(issuerName, nTokens, mTLS)
+		: testTokenRequest(issuerName, mTLS);
 }
 
-const MODE = publicVerif.BlindRSAMode.PSS;
 
-export async function testE2E(
-	issuerName: string,
-	nTokens: number,
-	mTLS?: MTLSConfiguration
-): Promise<boolean> {
-	const client = new Client(MODE);
-	const origin = new Origin(MODE);
-	console.log(nTokens)
-
-	const issuerConfig: IssuerConfiguration = await getIssuerConfig(issuerName, mTLS);
-
-	if (nTokens > 1) {
-		console.log(`Creating batched request for ${nTokens} tokens`);
-		return testArbitraryBatchedRequest(issuerName, nTokens, mTLS);
-		// return testArbitraryBatchedRequest(client, origin, issuerName, nTokens, mTLS);
-	} else {
-		return testTokenRequest(client, origin, issuerName, mTLS);
-	}
-}
-
-// TODO: Add type of client and origin
-export async function testTokenRequest(client, origin, issuerName: string, mTLS?: MTLSConfiguration) {
-	const redemptionContext = new Uint8Array(32);
-	redemptionContext.fill(0xfe);
+export async function testTokenRequest(issuerName: string, mTLS?: MTLSConfiguration): Promise<boolean> {
+	const client = new Client(BlindRSAMode.PSS);
+	const redemptionContext = new Uint8Array(32).fill(0xfe);
 	const challenge = new TokenChallenge(TOKEN_TYPES.BLIND_RSA.value, issuerName, redemptionContext);
 
-	const {
-		publicKeyEnc: issuerPublicKeyEnc,
-		publicKey: issuerPublicKey,
-		url: issuerRequestURL,
-	} = await getIssuerConfig(issuerName, mTLS);
-
-	const tokenRequest = await client.createTokenRequest(challenge, issuerPublicKeyEnc);
+	const { publicKeyEnc, publicKey, url } = await getIssuerConfig(issuerName, mTLS);
+	const tokenRequest = await client.createTokenRequest(challenge, publicKeyEnc);
 
 	const proxyFetch = mTLS ? await fetchWithMTLS(mTLS) : fetch;
-	const response = await proxyFetch(issuerRequestURL, {
+	const response = await proxyFetch(url, {
 		method: 'POST',
 		headers: {
 			'Content-Type': MediaType.PRIVATE_TOKEN_REQUEST,
@@ -149,101 +119,110 @@ export async function testTokenRequest(client, origin, issuerName: string, mTLS?
 	});
 
 	if (!response.ok) {
-		throw new Error(
-			`Issuer request failed: ${response.status} ${response.statusText}\n${await response.text()}`
-		);
+		throw new Error(`Issuer request failed: ${response.status} ${response.statusText}\n${await response.text()}`);
 	}
 
-	const tokenResponse = publicVerif.TokenResponse.deserialize(
-		new Uint8Array(await response.arrayBuffer())
-	);
+	const tokenResponse = publicVerif.TokenResponse.deserialize(new Uint8Array(await response.arrayBuffer()));
 	const token = await client.finalize(tokenResponse);
 
 	const origin = new Origin(BlindRSAMode.PSS);
-	return (
-		(await origin.verify(token, issuerPublicKey)) &&
-		response.headers.get('Content-Type') === MediaType.PRIVATE_TOKEN_RESPONSE
-	);
+	return (await origin.verify(token, publicKey))
+		&& response.headers.get('Content-Type') === MediaType.PRIVATE_TOKEN_RESPONSE;
 }
 
-async function testArbitraryBatchedRequest(issuerName: string, nTokens: number, mTLS?: MTLSConfiguration) {
-	// Create an array of per-token client instances.
-	const clients = new Array<publicVerif.Client>()
-	for (let i = 0; i < nTokens; i++) {
-		clients.push(new Client(BlindRSAMode.PSS));
-	}
+async function testArbitraryBatchedRequest(
+	issuerName: string,
+	nTokens: number,
+	mTLS?: MTLSConfiguration
+): Promise<boolean> {
+	console.log(`[Test] Initiating batched request for ${nTokens} tokens to issuer: ${issuerName}`);
+
+	// Initialize clients and origin
+	const clients = Array.from({ length: nTokens }, () => new Client(BlindRSAMode.PSS));
 	const origin = new Origin(BlindRSAMode.PSS);
 
-	const { publicKeyEnc: issuerPublicKeyEnc, publicKey: issuerPublicKey, url: issuerRequestURL } =
-		await getIssuerConfig(issuerName, mTLS);
-
+	// Get issuer config
+	const { publicKeyEnc, publicKey, url } = await getIssuerConfig(issuerName, mTLS);
 	const batchedTokensClient = new BatchedTokensClient();
 
-	const tokChls = new Array<TokenChallenge>(nTokens);
-	for (let i = 0; i < nTokens; i++) {
-		const redemptionContext = crypto.getRandomValues(new Uint8Array(32));
-		tokChls[i] = origin.createTokenChallenge(issuerName, redemptionContext);
-	}
+	// Create token challenges and requests
+	console.log(`[Test] Generating token challenges...`);
+	const tokenChallenges = clients.map(() =>
+		origin.createTokenChallenge(issuerName, crypto.getRandomValues(new Uint8Array(32)))
+	);
 
-	// Create individual token requests using the per-token clients.
-	const tokReqs = new Array<arbitraryBatched.TokenRequest>(nTokens);
-	for (let i = 0; i < tokChls.length; i++) {
-		try {
-			const rawTokReq = await clients[i].createTokenRequest(tokChls[i], issuerPublicKeyEnc);
-			tokReqs[i] = new TokenRequest(rawTokReq);
-		} catch (err) {
-			throw err;
-		}
-	}
+	console.log(`[Test] Creating ${nTokens} token requests...`);
+	const tokenRequests = await Promise.all(
+		tokenChallenges.map((ch, i) => clients[i].createTokenRequest(ch, publicKeyEnc))
+	);
 
-	const tokenRequests = batchedTokensClient.createTokenRequest(tokReqs);
-	const serializedRequest = tokenRequests.serialize();
+	console.log(`[Test] Constructing batched token request...`);
+	const batchedRequest = batchedTokensClient.createTokenRequest(
+		tokenRequests.map(tr => new TokenRequest(tr))
+	);
 
+	// Fetch with optional mTLS support
+	console.log(`[Test] Sending batched token request to issuer: ${url}`);
 	const proxyFetch = mTLS ? await fetchWithMTLS(mTLS) : fetch;
-	const response = await proxyFetch(issuerRequestURL, {
+	const response = await proxyFetch(url, {
 		method: 'POST',
 		headers: {
 			'Content-Type': MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST,
-			'Accept': MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST,
+			'Accept': MediaType.ARBITRARY_BATCHED_TOKEN_RESPONSE,
 		},
-		body: serializedRequest.buffer as Buffer, // node-fetch expects a Node.js Buffer
+		body: batchedRequest.serialize().buffer as Buffer,
 	});
 
 	if (!response.ok) {
+		console.error(`[Error] Issuer request failed: ${response.status} ${response.statusText}`);
 		throw new Error(`Issuer request failed: ${response.status} ${response.statusText}`);
 	}
 
-	const respBuffer = new Uint8Array(await response.arrayBuffer());
-	const tokenResponse = BatchedTokenResponse.deserialize(respBuffer);
+	console.log(`[Test] Processing token responses...`);
+	const tokenResponse = BatchedTokenResponse.deserialize(new Uint8Array(await response.arrayBuffer()));
+	const responses = tokenResponse.tokenResponses;
 
 	const tokens: Array<Token | undefined> = [];
 
-	for (const res of tokenResponse) {
-		if (res.tokenResponse === null) {
-			console.warn(`Token Response is null; skipping finalization.`);
+	for (const [index, res] of responses.entries()) {
+		if (!res.tokenResponse) {
+			console.warn(`[Warning] Token response ${index} is missing (null). Skipping finalization.`);
+			tokens.push(undefined);
 			continue;
 		}
-		const r = publicVerif.TokenResponse.deserialize(res.tokenResponse);
-		tokens.push(await clients[tokens.length].finalize(r)); // Use current length as index
+
+		try {
+			const deserializedResponse = publicVerif.TokenResponse.deserialize(res.tokenResponse);
+			const token = await clients[index].finalize(deserializedResponse);
+			tokens.push(token);
+			console.log(`[Token ${index}] Finalization successful.`);
+		} catch (err) {
+			console.error(`[Token ${index}] Finalization failed:`, err);
+			tokens.push(undefined);
+		}
 	}
 
-
+	console.log(`[Test] Verifying ${tokens.length} tokens...`);
 	let isValid = true;
-	for (let i = 0; i < tokens.length; i += 1) {
+
+	for (let i = 0; i < tokens.length; i++) {
 		const token = tokens[i];
 		try {
-			const valid = token !== undefined && (await origin.verify(token, issuerPublicKey));
-			console.log(`Verification for token [${i}]:`, valid);
-			isValid &&= valid;
+			const valid = token !== undefined && (await origin.verify(token, publicKey));
+			console.log(`[Verification] Token [${i}] Valid: ${valid}`);
+			if (!valid) isValid = false;
 		} catch (err) {
-			console.error(`Error verifying token [${i}]:`, err);
+			console.error(`[Error] Token verification failed for token [${i}]:`, err);
 			isValid = false;
 		}
 	}
-	console.log("Overall Tokens Validity:", isValid);
 
-	const contentTypeOk = response.headers.get('Content-Type') === MediaType.ARBITRARY_BATCHED_TOKEN_RESPONSE;
-	console.log("Response Content-Type Valid:", contentTypeOk);
+	const contentTypeValid =
+		response.headers.get('Content-Type') === MediaType.ARBITRARY_BATCHED_TOKEN_RESPONSE;
+	console.log(`[Test] Response Content-Type Valid: ${contentTypeValid}`);
 
-	return isValid && contentTypeOk;
+	const overallSuccess = isValid && contentTypeValid;
+	console.log(`[Test] Overall Batched Token Validity: ${overallSuccess ? '✅ Valid' : '❌ Invalid'}`);
+
+	return overallSuccess;
 }

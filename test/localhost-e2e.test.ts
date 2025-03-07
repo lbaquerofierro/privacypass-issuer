@@ -7,8 +7,6 @@ import { testE2E } from './e2e/issuer';
 
 const ISSUER_URL = 'localhost:8787';
 
-
-// TODO: Add batched token test
 describe('e2e on localhost', () => {
 	let serverProcess: ReturnType<typeof spawn> | undefined;
 
