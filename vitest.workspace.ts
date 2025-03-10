@@ -16,20 +16,7 @@ export default defineWorkspace([
 					isolatedStorage: true,
 					singleWorker: true,
 					wrangler: {
-						configPath: "./wrangler.toml"
-					},
-					miniflare: {
-						r2Persist: true,
-						compatibilityDate: "2025-03-10",
-						compatibilityFlags: ["nodejs_compat"],
-						r2Buckets: ["ISSUANCE_KEYS"],
-						bindings: {
-							LOGGING_SHIM_TOKEN: "",
-							WSHIM_ENDPOINT: "https://example.com",
-							VERSION_METADATA: "",
-							RELEASE: "",
-							MINIMUM_FRESHEST_KEYS: 1,
-						},
+						configPath: "test/wrangler-test.toml"
 					},
 				},
 				coverage: {

@@ -104,9 +104,11 @@ export class Router {
 		prefix?: string
 	): Context {
 		const metrics = new MetricsRegistry(env);
+
 		const wshimLogger = new WshimLogger(request, env);
 
 		let logger: Logger;
+
 		if (!env.SENTRY_SAMPLE_RATE || parseFloat(env.SENTRY_SAMPLE_RATE) === 0) {
 			logger = new ConsoleLogger();
 		} else {
@@ -114,6 +116,7 @@ export class Router {
 			if (!Number.isFinite(sentrySampleRate)) {
 				sentrySampleRate = 1;
 			}
+
 			logger = new FlexibleLogger(env.ENVIRONMENT, {
 				context: ectx,
 				request: request,

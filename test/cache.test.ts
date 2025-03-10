@@ -18,7 +18,7 @@ describe('cache revalidation', () => {
 
 	const initializeKeys = async (numberOfKeys = 1): Promise<void> => {
 		const rotateRequest = new IncomingRequest(rotateURL, { method: 'POST' });
-		const ctx = new createExecutionContext();
+		const ctx = createExecutionContext();
 
 		for (let i = 0; i < numberOfKeys; i += 1) {
 			await worker.fetch(rotateRequest, env, ctx);
@@ -68,12 +68,12 @@ describe('cache revalidation', () => {
 		});
 
 		const domainARequest = new IncomingRequest(`${sampleURL}${PRIVATE_TOKEN_ISSUER_DIRECTORY}`);
-		const ctx = new createExecutionContext();
+		const ctx = createExecutionContext();
 
 		const domainBRequest = new IncomingRequest(
 			`http://cache2.test${PRIVATE_TOKEN_ISSUER_DIRECTORY}`
 		);
-		const ctx2 = new createExecutionContext();
+		const ctx2 = createExecutionContext();
 
 		const mockCache = (await getDirectoryCache()) as unknown as MockCache;
 

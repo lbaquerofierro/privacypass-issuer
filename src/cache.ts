@@ -308,6 +308,7 @@ export interface CachedR2BucketOptions {
 export class CachedR2Bucket {
 	private bucket: R2Bucket;
 	private prefix: string;
+	private prefix: string;
 	constructor(
 		private ctx: Context,
 		bucket: R2Bucket,

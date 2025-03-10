@@ -29,13 +29,15 @@ const {
 	BatchedTokenRequest,
 } = arbitraryBatched;
 
+import { IssuerHandler } from '../src/index';
+
 const sampleURL = 'http://localhost';
 
 function setupTestContext() {
 	return getContext({
 		request: new Request(sampleURL),
 		env: env,
-		ectx: new createExecutionContext(),
+		ectx: createExecutionContext(),
 	});
 }
 
@@ -184,14 +186,14 @@ describe('non existing handler', () => {
 	});
 	it('should return 404 when a non GET existing endpoint is requested', async () => {
 		const request = new Request(nonExistingURL);
-		const response = await workerObject.fetch(request, env, new createExecutionContext());
+		const response = await workerObject.fetch(request, env, createExecutionContext());
 
 		expect(response.status).toBe(404);
 	});
 
 	it('should return 404 when a non POST existing endpoint is requested', async () => {
 		const request = new Request(nonExistingURL, { method: 'POST' });
-		const response = await workerObject.fetch(request, env, new createExecutionContext());
+		const response = await workerObject.fetch(request, env, createExecutionContext());
 
 		expect(response.status).toBe(404);
 	});
@@ -210,10 +212,10 @@ describe('rotate and clear key', () => {
 
 		env.MINIMUM_FRESHEST_KEYS = NUMBER_OF_KEYS_GENERATED.toFixed();
 		for (let i = 0; i < NUMBER_OF_KEYS_GENERATED; i += 1) {
-			await workerObject.fetch(rotateRequest, env, new createExecutionContext());
+			await workerObject.fetch(rotateRequest, env, createExecutionContext());
 		}
 
-		const response = await workerObject.fetch(directoryRequest, env, new createExecutionContext());
+		const response = await workerObject.fetch(directoryRequest, env, createExecutionContext());
 		expect(response.ok).toBe(true);
 
 		const directory: IssuerConfigurationResponse = await response.json();
@@ -230,12 +232,12 @@ describe('rotate and clear key', () => {
 		env.MINIMUM_FRESHEST_KEYS = NUMBER_OF_KEYS_GENERATED.toFixed();
 
 		for (let i = 0; i < NUMBER_OF_KEYS_GENERATED; i += 1) {
-			await workerObject.fetch(rotateRequest, env, new createExecutionContext());
+			await workerObject.fetch(rotateRequest, env, createExecutionContext());
 		}
 
-		await workerObject.fetch(clearRequest, env, new createExecutionContext());
+		await workerObject.fetch(clearRequest, env, createExecutionContext());
 
-		let response = await workerObject.fetch(directoryRequest, env, new createExecutionContext());
+		let response = await workerObject.fetch(directoryRequest, env, createExecutionContext());
 		expect(response.ok).toBe(true);
 
 		let directory: IssuerConfigurationResponse = await response.json();
@@ -243,8 +245,8 @@ describe('rotate and clear key', () => {
 		// All keys should still be present since the TTL has not expired
 		expect(directory['token-keys']).toHaveLength(NUMBER_OF_KEYS_GENERATED);
 
-		await workerObject.fetch(clearRequest, env, new createExecutionContext());
-		response = await workerObject.fetch(directoryRequest, env, new createExecutionContext());
+		await workerObject.fetch(clearRequest, env, createExecutionContext());
+		response = await workerObject.fetch(directoryRequest, env, createExecutionContext());
 		expect(response.ok).toBe(true);
 
 		directory = await response.json();
@@ -264,7 +266,7 @@ describe('directory', () => {
 		env.MINIMUM_FRESHEST_KEYS = numberOfKeys.toFixed();
 
 		for (let i = 0; i < numberOfKeys; i += 1) {
-			await workerObject.fetch(rotateRequest, env, new createExecutionContext());
+			await workerObject.fetch(rotateRequest, env, createExecutionContext());
 		}
 	};
 
@@ -280,7 +282,7 @@ describe('directory', () => {
 		env.MINIMUM_FRESHEST_KEYS = NUMBER_OF_KEYS_GENERATED.toFixed();
 		await initializeKeys(NUMBER_OF_KEYS_GENERATED);
 
-		const exct = new createExecutionContext();
+		const exct = createExecutionContext();
 		const response = await workerObject.fetch(directoryRequest, env, exct);
 		expect(response.ok).toBe(true);
 
@@ -309,7 +311,7 @@ describe('directory', () => {
 		const directoryRequest = new Request(directoryURL);
 		const mockCache = (await getDirectoryCache()) as unknown as MockCache;
 
-		let response = await workerObject.fetch(directoryRequest, env, new createExecutionContext());
+		let response = await workerObject.fetch(directoryRequest, env, createExecutionContext());
 		expect(response.ok).toBe(true);
 		expect(Object.entries(mockCache.cache)).toHaveLength(1);
 
@@ -318,14 +320,14 @@ describe('directory', () => {
 		const cachedResponse = new Response('cached response', { headers: { etag: sampleEtag } });
 		mockCache.cache[cachedURL] = cachedResponse;
 
-		response = await workerObject.fetch(directoryRequest, env, new createExecutionContext());
+		response = await workerObject.fetch(directoryRequest, env, createExecutionContext());
 		expect(response.ok).toBe(true);
 		expect(response).toBe(cachedResponse);
 
 		const cachedDirectoryRequest = new Request(directoryURL, {
 			headers: { 'if-none-match': sampleEtag },
 		});
-		response = await workerObject.fetch(cachedDirectoryRequest, env, new createExecutionContext());
+		response = await workerObject.fetch(cachedDirectoryRequest, env, createExecutionContext());
 		expect(response.status).toBe(304);
 
 		const headCachedDirectoryRequest = new Request(directoryURL, {
@@ -335,7 +337,7 @@ describe('directory', () => {
 		response = await workerObject.fetch(
 			headCachedDirectoryRequest,
 			env,
-			new createExecutionContext()
+			createExecutionContext()
 		);
 		expect(response.status).toBe(304);
 
@@ -345,7 +347,7 @@ describe('directory', () => {
 	it('not-before should be the unix time number of seconds as a 64-bit integer', async () => {
 		const directoryRequest = new Request(directoryURL);
 
-		const response = await workerObject.fetch(directoryRequest, env, new createExecutionContext());
+		const response = await workerObject.fetch(directoryRequest, env, createExecutionContext());
 		expect(response.ok).toBe(true);
 
 		const directory = (await response.json()) as IssuerConfig;
@@ -372,7 +374,7 @@ describe('key rotation', () => {
 		ctx = getContext({
 			request: new Request(sampleURL),
 			env: env,
-			ectx: new createExecutionContext(),
+			ectx: createExecutionContext(),
 		});
 
 		try {
@@ -451,7 +453,7 @@ describe('Integration Test for Key Clearing with Mocked Date', () => {
 		ctx = getContext({
 			request: new Request(sampleURL),
 			env: env,
-			ectx: new createExecutionContext(),
+			ectx: createExecutionContext(),
 		});
 	});
 
