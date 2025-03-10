@@ -14,6 +14,7 @@ import {
 	publicVerif,
 	util,
 } from '@cloudflare/privacypass-ts';
+import { url } from 'node:inspector';
 
 const { BlindRSAMode, Client, Origin } = publicVerif;
 
@@ -95,9 +96,10 @@ async function importPublicKey(spki: Uint8Array) {
 
 export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Promise<boolean> {
 	const client = new Client(BlindRSAMode.PSS);
+	const origin = new Origin(BlindRSAMode.PSS);
 
-	const redemptionContext = new Uint8Array(32);
-	redemptionContext.fill(0xfe);
+	const redemptionContext = new Uint8Array(32).fill(0xfe);
+	console.log("Using fixed redemptionContext:", Buffer.from(redemptionContext).toString("hex"));
 	const challenge = new TokenChallenge(TOKEN_TYPES.BLIND_RSA.value, issuerName, redemptionContext);
 
 	const {
@@ -109,6 +111,7 @@ export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Pro
 	const tokenRequest = await client.createTokenRequest(challenge, issuerPublicKeyEnc);
 
 	const proxyFetch = mTLS ? await fetchWithMTLS(mTLS) : fetch;
+
 	const response = await proxyFetch(issuerRequestURL, {
 		method: 'POST',
 		headers: {
@@ -119,9 +122,7 @@ export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Pro
 	});
 
 	if (!response.ok) {
-		throw new Error(
-			`Issuer request failed: ${response.status} ${response.statusText}\n${await response.text()}`
-		);
+		throw new Error(`Issuer request failed: ${response.status} ${response.statusText}`);
 	}
 
 	const tokenResponse = publicVerif.TokenResponse.deserialize(
@@ -129,7 +130,6 @@ export async function testE2E(issuerName: string, mTLS?: MTLSConfiguration): Pro
 	);
 	const token = await client.finalize(tokenResponse);
 
-	const origin = new Origin(BlindRSAMode.PSS);
 	return (
 		(await origin.verify(token, issuerPublicKey)) &&
 		response.headers.get('Content-Type') === MediaType.PRIVATE_TOKEN_RESPONSE

@@ -31,6 +31,7 @@ import {
 const { BlindRSAMode, Issuer, TokenRequest } = publicVerif;
 
 import { shouldRotateKey, shouldClearKey } from './utils/keyRotation';
+import { WorkerEntrypoint } from 'cloudflare:workers';
 
 const keyToTokenKeyID = async (key: Uint8Array): Promise<number> => {
 	const hash = await crypto.subtle.digest('SHA-256', key);
@@ -44,14 +45,25 @@ interface StorageMetadata extends Record<string, string> {
 	tokenKeyID: string;
 }
 
-export const handleTokenRequest = async (ctx: Context, request: Request) => {
-	ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? RELEASE });
+export const handleTokenRequest = async (ctx: Context, request: Request, prefix: string) => {
 	const contentType = request.headers.get('content-type');
 	if (!contentType || contentType !== MediaType.PRIVATE_TOKEN_REQUEST) {
 		throw new HeaderNotDefinedError(`"Content-Type" must be "${MediaType.PRIVATE_TOKEN_REQUEST}"`);
 	}
 
+	// const signedToken = await issue(ctx, await request.arrayBuffer());
+	// return new Response(signedToken, {
+	// 	headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
+	// });
+	// };
+
+	// const issue = async (
+	// 	ctx: Context,
+	// 	request: ArrayBufferLike,
+	// 	prefix = ''
+	// ): Promise<ArrayBufferLike> => {
 	const buffer = await request.arrayBuffer();
+	// const tokenRequest = TokenRequest.deserialize(TOKEN_TYPES.BLIND_RSA, new Uint8Array(request));
 	const tokenRequest = TokenRequest.deserialize(TOKEN_TYPES.BLIND_RSA, new Uint8Array(buffer));
 
 	if (tokenRequest.tokenType !== TOKEN_TYPES.BLIND_RSA.value) {
@@ -59,6 +71,8 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	}
 
 	const keyID = tokenRequest.truncatedTokenKeyId.toString();
+
+	// TODO: Add prefix
 	const key = await ctx.bucket.ISSUANCE_KEYS.get(keyID);
 
 	if (key === null) {
@@ -67,17 +81,17 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 	}
 
 	const CRYPTO_KEY_EXPIRATION_IN_MS = 300_000; // 5min
-
 	const cryptoKeyCache = new InMemoryCryptoKeyCache(ctx);
+
 	const sk = await cryptoKeyCache.read(`sk-${keyID}`, async keyID => {
 		const privateKey = key.data;
 		if (privateKey === undefined) {
 			ctx.metrics.issuanceKeyErrorTotal.inc({ key_id: keyID, type: KeyError.MISSING_PRIVATE_KEY });
 			throw new Error('No private key found for the requested key id');
 		}
-		let sk: CryptoKey;
+
 		try {
-			sk = await crypto.subtle.importKey(
+			const sk = await crypto.subtle.importKey(
 				'pkcs8',
 				privateKey,
 				{
@@ -88,51 +102,58 @@ export const handleTokenRequest = async (ctx: Context, request: Request) => {
 				true,
 				['sign']
 			);
+			return {
+				value: sk,
+				expiration: new Date(Date.now() + CRYPTO_KEY_EXPIRATION_IN_MS),
+			};
 		} catch (e) {
 			ctx.metrics.issuanceKeyErrorTotal.inc({ key_id: keyID, type: KeyError.INVALID_PRIVATE_KEY });
 			throw e;
 		}
-		return {
-			value: sk,
-			expiration: new Date(Date.now() + CRYPTO_KEY_EXPIRATION_IN_MS),
-		};
 	});
+
 	const pk = await cryptoKeyCache.read(`pk-${keyID}`, async keyID => {
 		const pkEnc = key?.customMetadata?.publicKey;
 		if (!pkEnc) {
 			ctx.metrics.issuanceKeyErrorTotal.inc({ key_id: keyID, type: KeyError.MISSING_PUBLIC_KEY });
 			throw new Error('No public key found for the requested key id');
 		}
-		const pk = await crypto.subtle.importKey(
-			'spki',
-			util.convertRSASSAPSSToEnc(b64Tou8(b64URLtoB64(pkEnc))),
-			{ name: 'RSA-PSS', hash: 'SHA-384' },
-			true,
-			['verify']
-		);
 
-		return {
-			value: pk,
-			expiration: new Date(Date.now() + CRYPTO_KEY_EXPIRATION_IN_MS),
-		};
+		try {
+			const pk = await crypto.subtle.importKey(
+				'spki',
+				util.convertRSASSAPSSToEnc(b64Tou8(b64URLtoB64(pkEnc))),
+				{ name: 'RSA-PSS', hash: 'SHA-384' },
+				true,
+				['verify']
+			);
+			return {
+				value: pk,
+				expiration: new Date(Date.now() + CRYPTO_KEY_EXPIRATION_IN_MS),
+			};
+		} catch (e) {
+			console.error(`Error importing public key for key ID: ${keyID}`, e);
+			throw e;
+		}
 	});
 
-	const domain = new URL(request.url).host;
+
+	const domain = ctx.hostname;
 	const issuer = new Issuer(BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
 	const signedToken = await issuer.issue(tokenRequest);
+
 	ctx.metrics.signedTokenTotal.inc({ key_id: keyID });
+	// const serializedToken = signedToken.serialize();
 
-	// too verbose with workers observability
-	// once there is a way to filter logpush based on log level, we can consider re-enabling
-	// console.debug(`Token issued successfully for key ${keyID}`);
-
+	// return serializedToken;
+	// const signedToken = await issue(ctx, await request.arrayBuffer());
 	return new Response(signedToken.serialize(), {
 		headers: { 'content-type': MediaType.PRIVATE_TOKEN_RESPONSE },
 	});
-};
+}
 
-export const handleHeadTokenDirectory = async (ctx: Context, request: Request) => {
-	const getResponse = await handleTokenDirectory(ctx, request);
+export const handleHeadTokenDirectory = async (ctx: Context, request: Request, prefix: string = '') => {
+	const getResponse = await handleTokenDirectory(ctx, request, prefix);
 
 	return new Response(undefined, {
 		status: getResponse.status,
@@ -140,7 +161,7 @@ export const handleHeadTokenDirectory = async (ctx: Context, request: Request) =
 	});
 };
 
-export const handleTokenDirectory = async (ctx: Context, request: Request) => {
+export const handleTokenDirectory = async (ctx: Context, request: Request, prefix: string) => {
 	const cache = await getDirectoryCache();
 	let cachedResponse: Response | undefined;
 	try {
@@ -179,7 +200,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
@@ -210,7 +231,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 	return response;
 };
 
-export const handleRotateKey = async (ctx: Context, _request?: Request) => {
+export const handleRotateKey = async (ctx: Context, request: Request, prefix: string) => {
 	ctx.metrics.keyRotationTotal.inc();
 
 	// Generate a new type 2 Issuer key
@@ -259,7 +280,7 @@ export const handleRotateKey = async (ctx: Context, _request?: Request) => {
 	return new Response(`New key ${publicKeyEnc}`, { status: 201 });
 };
 
-export const handleClearKey = async (ctx: Context, _request?: Request) => {
+export const handleClearKey = async (ctx: Context, request: Request, prefix: string) => {
 	ctx.metrics.keyClearTotal.inc();
 
 	const keys = await ctx.bucket.ISSUANCE_KEYS.list({ shouldUseCache: false });
@@ -312,10 +333,26 @@ export const handleClearKey = async (ctx: Context, _request?: Request) => {
 	return new Response(`Keys cleared: ${toDeleteArray.join('\n')}`, { status: 201 });
 };
 
-export default {
-	async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
-		// router defines all API endpoints
-		// this ease testing, as test can be performed on specific handler methods, not necessardily e2e
+// const VALID_PATHS = new Set([
+// 	'/.well-known/token-issuer-directory',
+// 	'/token-request',
+// 	'/admin/rotate',
+// 	'/admin/clear',
+// 	'/',
+// 	PRIVATE_TOKEN_ISSUER_DIRECTORY,
+// ]);
+
+
+export class IssuerHandler extends WorkerEntrypoint<Bindings> {
+	private context(url: string): Context {
+		const env = this.env;
+		const ectx = this.ctx;
+
+		const sampleRequest = new Request(url);
+		return Router.buildContext(sampleRequest, env, ectx);
+	}
+
+	async fetch(request: Request): Promise<Response> {
 		const router = new Router();
 
 		router
@@ -326,27 +363,48 @@ export default {
 
 		return router.handle(
 			request as Request<Bindings, IncomingRequestCfProperties<unknown>>,
-			env,
-			ctx
+			this.env,
+			this.ctx
 		);
-	},
+	}
 
-	async scheduled(event: ScheduledEvent, env: Bindings, ectx: ExecutionContext) {
-		const sampleRequest = new Request(`https://schedule.example.com`);
-		const ctx = new Context(
-			sampleRequest,
-			env,
-			ectx.waitUntil.bind(ectx),
-			new ConsoleLogger(),
-			new MetricsRegistry(env),
-			new WshimLogger(sampleRequest, env)
-		);
-		const date = new Date(event.scheduledTime);
+	async tokenDirectory(
+		url: string,
+		prefix: string = "",
+	): Promise<Response> {
+		const ctx = this.context(url);
+		return await handleTokenDirectory(ctx, new Request(url), prefix);
+	}
 
-		if (shouldRotateKey(date, env)) {
-			await handleRotateKey(ctx);
-		} else {
-			await handleClearKey(ctx);
-		}
+	async issue(
+		url: string,
+		tokenRequest: Request,
+		prefix: string = ""
+	): Promise<Response> {
+		const ctx = this.context(url);
+		return handleTokenRequest(ctx, tokenRequest, prefix);
+	}
+
+	async rotateKey(
+		url: string,
+		prefix: string = ""
+	): Promise<Response> {
+		const ctx = this.context(url);
+		return handleRotateKey(ctx, new Request(url), prefix);
+	}
+
+	async clearKey(
+		url: string,
+		prefix: string = ""
+	): Promise<Response> {
+		const ctx = this.context(url);
+		return await handleClearKey(ctx, new Request(url), prefix);
+	}
+}
+
+export default {
+	async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
+		const issuerHandler = new IssuerHandler(ctx, env);
+		return issuerHandler.fetch(request);
 	},
 };
