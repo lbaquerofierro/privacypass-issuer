@@ -1,0 +1,15 @@
+// tsconfig.types.json
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "declaration": true,
+    "declarationMap": false,
+    "outDir": "./dist/types",
+    "rootDir": "./src",
+    "stripInternal": true
+  },
+  "include": ["src"]
+}
+

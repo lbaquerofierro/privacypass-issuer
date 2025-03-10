@@ -184,7 +184,7 @@ describe('non existing handler', () => {
 	});
 	it('should return 404 when a non GET existing endpoint is requested', async () => {
 		const request = new Request(nonExistingURL);
-		const response = await workerObject.fetch(request, env, new createExecutionContext());
+		const response = await workerObject.fetch(request, env, createExecutionContext());
 
 		expect(response.status).toBe(404);
 	});
