@@ -6,10 +6,18 @@ import { RSABSSA } from '@cloudflare/blindrsa-ts';
 import { webcrypto } from 'node:crypto';
 
 import { WshimLogger } from '../src/context/logging';
+import { Router } from '../src/router';
+import { MetricsRegistry } from '../src/context/metrics';
+import { Context } from '../src/context';
 
 jest.spyOn(WshimLogger.prototype, 'flushLogs').mockImplementation(async () => {
 	return Promise.resolve();
 });
+
+// Cast Router.prototype to any to bypass TypeScript’s private member restrictions:
+jest.spyOn(Router.prototype as any, 'postProcessing').mockImplementation(async () => Promise.resolve());
+jest.spyOn(MetricsRegistry.prototype, 'publish').mockResolvedValue();
+jest.spyOn(Context.prototype, 'waitForPromises').mockResolvedValue(undefined);
 
 interface RsaPssParams extends Algorithm {
 	saltLength: number;

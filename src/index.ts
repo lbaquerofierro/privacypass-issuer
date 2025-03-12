@@ -3,7 +3,7 @@
 
 import { Bindings } from './bindings';
 import { Context } from './context';
-import { Router } from './router';
+import { get, post, Router, RouteMapping } from './router';
 import {
 	BadTokenKeyRequestedError,
 	HeaderNotDefinedError,
@@ -396,16 +396,14 @@ export const handleClearKey = async (ctx: Context, _request?: Request) => {
 
 export default {
 	async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
-		// router defines all API endpoints
-		// this ease testing, as test can be performed on specific handler methods, not necessardily e2e
-		const router = new Router();
+		const routes: RouteMapping = {
+			[PRIVATE_TOKEN_ISSUER_DIRECTORY]: get(handleTokenDirectory),
+			"/token-request": post(handleTokenRequest),
+			"/admin/rotate": post(handleRotateKey),
+			"/admin/clear": post(handleClearKey),
+		};
 
-		router
-			.get(PRIVATE_TOKEN_ISSUER_DIRECTORY, handleTokenDirectory)
-			.post('/token-request', handleTokenRequest)
-			.post('/admin/rotate', handleRotateKey)
-			.post('/admin/clear', handleClearKey);
-
+		const router = new Router(routes);
 		return router.handle(
 			request as Request<Bindings, IncomingRequestCfProperties<unknown>>,
 			env,

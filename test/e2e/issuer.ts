@@ -94,6 +94,7 @@ export async function rotateKey(issuerName: string, mTLS: MTLSConfiguration) {
 }
 
 export async function testE2E(issuerName: string, nTokens: number, requestType: string, mTLS?: MTLSConfiguration): Promise<boolean> {
+	console.log(`[Test] Initiating E2E test for issuer: ${issuerName}, nTokens: ${nTokens}, requestType: ${requestType}`);
 	return requestType === 'batched'
 		? testArbitraryBatchedRequest(issuerName, nTokens, mTLS)
 		: testTokenRequest(issuerName, mTLS);
