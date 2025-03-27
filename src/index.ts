@@ -36,6 +36,8 @@ import {
 } from './cache';
 const { BlindRSAMode, Issuer, TokenRequest } = publicVerif;
 const { BatchedTokenRequest, BatchedTokenResponse, Issuer: BatchedTokensIssuer } = arbitraryBatched;
+import { shouldRotateKey } from './utils/keyRotation';
+
 
 import { shouldClearKey } from './utils/keyRotation';
 import { WorkerEntrypoint } from 'cloudflare:workers';
@@ -64,10 +66,12 @@ export const issue = async (
 
 	switch (contentType) {
 		case MediaType.PRIVATE_TOKEN_REQUEST: {
+			console.log('[Debug] Received private token request');
 			const serialized = await handleSingleTokenRequest(ctx, buffer, domain);
 			return { serialized, responseContentType: MediaType.PRIVATE_TOKEN_RESPONSE };
 		}
 		case MediaType.ARBITRARY_BATCHED_TOKEN_REQUEST: {
+			console.log('[Debug] Received arbitrary batched token request');
 			const { serialized, status } = await handleBatchedTokenRequest(ctx, buffer, domain);
 			return {
 				serialized,
@@ -113,9 +117,12 @@ export const handleSingleTokenRequest = async (
 	}
 
 	const keyID = tokenRequest.truncatedTokenKeyId;
+
 	const { sk, pk } = await getBlindRSAKeyPair(ctx, keyID);
 	const issuer = new Issuer(BlindRSAMode.PSS, domain, sk, pk, { supportsRSARAW: true });
+
 	const signedToken = await issuer.issue(tokenRequest);
+	console.log('[Debug] signedToken is: ', signedToken);
 
 	ctx.metrics.issuanceRequestTotal.inc({ version: ctx.env.VERSION_METADATA.id ?? RELEASE });
 	ctx.metrics.signedTokenTotal.inc({ key_id: keyID });
@@ -137,6 +144,7 @@ export const handleBatchedTokenRequest = async (
 	}
 
 	const keyID = batchedTokenRequest.tokenRequests[0].truncatedTokenKeyId;
+	console.log("[Debug] the keyID is: ", keyID);
 
 	// Validate each token request in the batch.
 	for (const tokenReq of batchedTokenRequest.tokenRequests) {
@@ -165,6 +173,7 @@ const getBlindRSAKeyPair = async (
 	ctx: Context,
 	keyID: number
 ): Promise<{ sk: CryptoKey; pk: CryptoKey }> => {
+	console.log("[Debug] inside getBlindRSAKeyPair, about to get key");
 	const key = await ctx.bucket.ISSUANCE_KEYS.get(keyID.toString());
 
 	if (key === null) {
@@ -278,7 +287,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
@@ -467,5 +476,18 @@ export default {
 	async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
 		const issuerHandler = new IssuerHandler(ctx, env);
 		return issuerHandler.fetch(request);
+	},
+
+	async scheduled(event: ScheduledEvent, env: Bindings, ctx: ExecutionContext) {
+		const sampleRequest = new Request(`https://schedule.example.com`);
+
+		const context = Router.buildContext(sampleRequest, env, ctx, '');
+		const date = new Date(event.scheduledTime);
+
+		if (shouldRotateKey(date, env)) {
+			await handleRotateKey(context, sampleRequest);
+		} else {
+			await handleClearKey(context, sampleRequest);
+		}
 	},
 };

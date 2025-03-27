@@ -109,7 +109,7 @@ export function shouldRevalidate(expirationDate: Date): boolean {
 export class InMemoryCryptoKeyCache {
 	private static store: Map<string, CacheElement<CryptoKey>> = new Map();
 
-	constructor(private ctx: Context) {}
+	constructor(private ctx: Context) { }
 
 	async read(
 		key: string,
@@ -146,7 +146,7 @@ export class InMemoryCryptoKeyCache {
 export class InMemoryCache implements ReadableCache {
 	private static store: Map<string, CacheElement<string>> = new Map();
 
-	constructor(private ctx: Context) {}
+	constructor(private ctx: Context) { }
 
 	async read<T>(key: string, setValFn: (key: string) => Promise<CacheElement<T>>): Promise<T> {
 		const refreshCache = async () => {
@@ -182,7 +182,7 @@ export class APICache implements ReadableCache {
 	constructor(
 		private ctx: Context,
 		private cacheKey: string
-	) {}
+	) { }
 
 	async read<T>(key: string, setValFn: (key: string) => Promise<CacheElement<T>>): Promise<T> {
 		const cache = await caches.open(this.cacheKey);
@@ -368,19 +368,37 @@ export class CachedR2Bucket {
 	}
 
 	list(options?: R2ListOptions & CachedR2BucketOptions): Promise<CachedR2Objects> {
-		// Ensure the list options include the prefix from the bucket if not already provided.
+		// Clone the options
 		const actualOptions: R2ListOptions = { ...options };
+
+		// Log incoming options
+		console.log("[Debug] Original list() options:", options);
+
+		// Apply prefix if not provided explicitly
 		if (!actualOptions.prefix && this.prefix) {
 			actualOptions.prefix = this.prefix;
+			console.log(`[Debug] Applied default prefix: ${this.prefix}`);
+		} else {
+			console.log(`[Debug] Using provided prefix: ${actualOptions.prefix}`);
 		}
 
+		// Log final options passed to bucket.list()
+		console.log("[Debug] Final list() options:", actualOptions);
+
+		// Check if we should use cache
 		if (!this.shouldUseCache(options)) {
+			console.log("[Debug] Bypassing cache — calling bucket.list directly");
 			return this.bucket.list(actualOptions);
 		}
 
 		const cacheKey = `list/${JSON.stringify(actualOptions)}`;
+		console.log(`[Debug] Using cache key: ${cacheKey}`);
+
 		return this.cache.read(cacheKey, async () => {
+			console.log("[Debug] Cache miss — fetching from R2 bucket");
 			const objects = await this.bucket.list(actualOptions);
+			console.log(`[Debug] Found ${objects.objects.length} objects`);
+			console.log("[Debug] Object keys:", objects.objects.map(obj => obj.key));
 			const value = new CachedR2Objects(objects);
 			return {
 				value,
@@ -389,6 +407,7 @@ export class CachedR2Bucket {
 		});
 	}
 
+
 	// WARNING: key should be lowered than 1024 bytes
 	// See https://developers.cloudflare.com/r2/reference/limits/
 	async get(
@@ -396,6 +415,7 @@ export class CachedR2Bucket {
 		options?: R2GetOptions & CachedR2BucketOptions
 	): Promise<CachedR2Object | null> {
 		const prefixedKey = this.addPrefix(key);
+		console.log(`[Debug] get() called with key: ${key}, prefixedKey: ${prefixedKey}`);
 		if (!this.shouldUseCache(options)) {
 			return this.bucket.get(prefixedKey, options);
 		}

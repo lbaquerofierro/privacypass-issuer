@@ -18,7 +18,7 @@ describe('e2e tests with Vitest', () => {
 		const customFetch = (url: string, init?: RequestInit) => SELF.fetch(url, init);
 		const isValid = await requestSingleToken(sampleURL, sampleURL, customFetch);
 		expect(isValid).toBe(true);
-		console.log('Single token request is valid:', isValid);
+		console.log('[Debug] Single token request is valid:', isValid);
 	});
 
 	it.each([1, 2, 3])('should issue a valid batch of %d token(s)', async nTokens => {
