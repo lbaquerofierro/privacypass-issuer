@@ -278,7 +278,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
@@ -437,6 +437,7 @@ export class IssuerHandler extends WorkerEntrypoint<Bindings> {
 	}
 
 	async tokenDirectory(url: string, prefix: string): Promise<Response> {
+		console.log('here 2')
 		const ctx = this.context(url, prefix);
 		return await handleTokenDirectory(ctx, new Request(url));
 	}
@@ -465,6 +466,7 @@ export class IssuerHandler extends WorkerEntrypoint<Bindings> {
 
 export default {
 	async fetch(request: Request, env: Bindings, ctx: ExecutionContext) {
+		console.log('here 1')
 		const issuerHandler = new IssuerHandler(ctx, env);
 		return issuerHandler.fetch(request);
 	},
