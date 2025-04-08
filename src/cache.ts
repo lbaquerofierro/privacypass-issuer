@@ -13,6 +13,7 @@ export const getDirectoryCache = async (): Promise<Cache> => {
 export const DIRECTORY_CACHE_REQUEST = (hostname: string, prefix: string) => {
 	const normalizedPrefix = prefix !== '' ? `/${prefix}` : '';
 	const url = `https://${hostname}${normalizedPrefix}${PRIVATE_TOKEN_ISSUER_DIRECTORY}`;
+	console.log(`[Debug] DIRECTORY_CACHE_REQUEST: ${url}`);
 	return new Request(url);
 };
 
@@ -397,6 +398,7 @@ export class CachedR2Bucket {
 		options?: R2GetOptions & CachedR2BucketOptions
 	): Promise<CachedR2Object | null> {
 		const prefixedKey = this.addPrefix(key);
+		console.log(`[Debug] trying to use cache for ${prefixedKey}`);
 		if (!this.shouldUseCache(options)) {
 			return this.bucket.get(prefixedKey, options);
 		}
