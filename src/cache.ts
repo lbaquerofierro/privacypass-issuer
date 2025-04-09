@@ -13,6 +13,7 @@ export const getDirectoryCache = async (): Promise<Cache> => {
 export const DIRECTORY_CACHE_REQUEST = (hostname: string, prefix: string) => {
 	const normalizedPrefix = prefix !== '' ? `/${prefix}` : '';
 	const url = `https://${hostname}${normalizedPrefix}${PRIVATE_TOKEN_ISSUER_DIRECTORY}`;
+	console.log(`[Debug] Directory cache request: ${url}`);
 	return new Request(url);
 };
 
@@ -112,7 +113,7 @@ export function shouldRevalidate(expirationDate: Date): boolean {
 export class InMemoryCryptoKeyCache {
 	private static store: Map<string, CacheElement<CryptoKey>> = new Map();
 
-	constructor(private ctx: Context) {}
+	constructor(private ctx: Context) { }
 
 	async read(
 		key: string,
@@ -149,7 +150,7 @@ export class InMemoryCryptoKeyCache {
 export class InMemoryCache implements ReadableCache {
 	private static store: Map<string, CacheElement<string>> = new Map();
 
-	constructor(private ctx: Context) {}
+	constructor(private ctx: Context) { }
 
 	async read<T>(key: string, setValFn: (key: string) => Promise<CacheElement<T>>): Promise<T> {
 		const refreshCache = async () => {
@@ -185,7 +186,7 @@ export class APICache implements ReadableCache {
 	constructor(
 		private ctx: Context,
 		private cacheKey: string
-	) {}
+	) { }
 
 	async read<T>(key: string, setValFn: (key: string) => Promise<CacheElement<T>>): Promise<T> {
 		const cache = await caches.open(this.cacheKey);
@@ -397,6 +398,7 @@ export class CachedR2Bucket {
 		options?: R2GetOptions & CachedR2BucketOptions
 	): Promise<CachedR2Object | null> {
 		const prefixedKey = this.addPrefix(key);
+		console.log("[Debug] CachedR2Bucket get with prefixKey: ", prefixedKey);
 		if (!this.shouldUseCache(options)) {
 			return this.bucket.get(prefixedKey, options);
 		}
