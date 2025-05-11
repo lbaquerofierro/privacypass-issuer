@@ -307,7 +307,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
@@ -394,8 +394,10 @@ const clearKey = async (ctx: Context): Promise<string[]> => {
 	ctx.metrics.keyClearTotal.inc();
 
 	const keys = await ctx.bucket.ISSUANCE_KEYS.list({ shouldUseCache: false });
+	const totalKeys = keys.objects.length;
 
-	if (keys.objects.length === 0) {
+	if (totalKeys === 0) {
+		ctx.wshimLogger.log("[KeyClear] No keys found.");
 		return [];
 	}
 
@@ -405,27 +407,24 @@ const clearKey = async (ctx: Context): Promise<string[]> => {
 	keys.objects.sort((a, b) => new Date(b.uploaded).getTime() - new Date(a.uploaded).getTime());
 
 	const toDelete: Set<string> = new Set();
+	const timestamps: number[] = [];
 
 	for (let i = 0; i < keys.objects.length; i++) {
 		const key = keys.objects[i];
 		const notBefore = key.customMetadata?.notBefore;
 		let keyNotBefore: Date;
+
 		if (notBefore) {
 			keyNotBefore = new Date(Number.parseInt(notBefore) * 1000);
 		} else {
 			keyNotBefore = new Date(key.uploaded);
 		}
 
-		const isFreshest = i < freshestKeyCount;
+		if (i < freshestKeyCount) continue;
 
-		if (isFreshest) {
-			continue;
-		}
-
-		const shouldDelete = shouldClearKey(keyNotBefore, lifespanInMs);
-
-		if (shouldDelete) {
+		if (shouldClearKey(keyNotBefore, lifespanInMs)) {
 			toDelete.add(key.key);
+			timestamps.push(keyNotBefore.getTime());
 		}
 	}
 
@@ -434,15 +433,19 @@ const clearKey = async (ctx: Context): Promise<string[]> => {
 	if (toDeleteArray.length > 0) {
 		await ctx.bucket.ISSUANCE_KEYS.delete(toDeleteArray);
 		ctx.waitUntil(clearDirectoryCache(ctx));
+
+		const minTime = new Date(Math.min(...timestamps)).toISOString();
+		const maxTime = new Date(Math.max(...timestamps)).toISOString();
+		ctx.wshimLogger.log(
+			`[KeyClear] Cleared ${toDeleteArray.length} of ${totalKeys} keys (from ${minTime} to ${maxTime}).`
+		);
+	} else {
+		console.log(`[KeyClear] No keys cleared out of ${totalKeys} found.`);
 	}
-	ctx.wshimLogger.log(
-		toDeleteArray.length > 0
-			? `\nKeys cleared: ${toDeleteArray.join('\n')}`
-			: '\nNo keys were cleared.'
-	);
 
 	return toDeleteArray;
 };
+
 
 export const handleClearKey = async (ctx: Context, _request: Request) => {
 	const deletedKeys = await clearKey(ctx);
