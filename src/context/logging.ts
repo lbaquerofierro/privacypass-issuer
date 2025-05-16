@@ -149,19 +149,19 @@ export class ConsoleLogger implements Logger {
 		// eslint-disable-next-line no-console
 		console.error(err.stack);
 	}
-	setTag(key: string, value: string): void {}
-	setSampleRate(sampleRate: number): void {}
-	addBreadcrumb(breadcrumb: Breadcrumb): void {}
+	setTag(key: string, value: string): void { }
+	setSampleRate(sampleRate: number): void { }
+	addBreadcrumb(breadcrumb: Breadcrumb): void { }
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	info(category: string, message: string, data?: { [key: string]: any }): void {}
+	info(category: string, message: string, data?: { [key: string]: any }): void { }
 }
 
 export class VoidLogger implements Logger {
-	setTag(key: string, value: string): void {}
-	setSampleRate(sampleRate: number): void {}
-	addBreadcrumb(breadcrumb: Breadcrumb): void {}
-	captureException(e: Error): void {}
-	info(category: string, message: string, data?: { [key: string]: any }): void {}
+	setTag(key: string, value: string): void { }
+	setSampleRate(sampleRate: number): void { }
+	addBreadcrumb(breadcrumb: Breadcrumb): void { }
+	captureException(e: Error): void { }
+	info(category: string, message: string, data?: { [key: string]: any }): void { }
 }
 /* eslint-enable */
 
@@ -188,9 +188,17 @@ export class WshimLogger {
 			throw new Error('Sample rate must be a number between 0 and 1');
 		}
 
+		const socket = env.WSHIM_SOCKET;
+		this.fetcher = (input: RequestInfo, init?: RequestInit) => {
+			if (socket && typeof socket.fetch === 'function') {
+				return socket.fetch.bind(socket)(input, init);
+			}
+			// console.log("Using socket.fetch:", typeof socket.fetch, "Bound to:", socket);
+			return fetch(input, init);
+		};
+
 		this.serviceToken = env.LOGGING_SHIM_TOKEN;
 		this.sampleRate = sampleRate;
-		this.fetcher = env.WSHIM_SOCKET?.fetch?.bind(env.WSHIM_SOCKET) ?? fetch;
 		this.loggingEndpoint = `${env.WSHIM_ENDPOINT}/log`;
 	}
 
@@ -246,19 +254,30 @@ export class WshimLogger {
 			logs: this.logs.map(log => ({ message: { ...defaultFields, ...log } })),
 		});
 
+		console.log("Flushing logs:", body);
+
+		// 🧪 Diagnostics for debugging fetcher issues
+		console.log("this.fetcher typeof:", typeof this.fetcher);
+		console.log("this.fetcher === fetch:", this.fetcher === fetch);
+		console.log("this.fetcher.toString:", this.fetcher?.toString?.());
+
 		try {
 			const response = await this.fetcher(this.loggingEndpoint, {
-				method: 'POST',
+				method: "POST",
 				headers: { Authorization: `Bearer ${this.serviceToken}` },
 				body,
 			});
+
 			if (!response.ok) {
-				console.error(`Failed to flush logs: ${response.status} ${response.statusText}`);
+				console.error(
+					`Failed to flush logs: ${response.status} ${response.statusText}`,
+				);
 			}
 		} catch (error) {
-			console.error('Failed to flush logs:', error);
+			console.error("Failed to flush logs:", error);
 		}
 
 		this.logs = [];
 	}
+
 }
