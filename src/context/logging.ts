@@ -188,9 +188,16 @@ export class WshimLogger {
 			throw new Error('Sample rate must be a number between 0 and 1');
 		}
 
+		const socket = env.WSHIM_SOCKET;
+		this.fetcher = (input: RequestInfo, init?: RequestInit) => {
+			if (socket && typeof socket.fetch === 'function') {
+				return socket.fetch(input, init);
+			}
+			return fetch(input, init);
+		};
+
 		this.serviceToken = env.LOGGING_SHIM_TOKEN;
 		this.sampleRate = sampleRate;
-		this.fetcher = env.WSHIM_SOCKET?.fetch?.bind(env.WSHIM_SOCKET) ?? fetch;
 		this.loggingEndpoint = `${env.WSHIM_ENDPOINT}/log`;
 	}
 
