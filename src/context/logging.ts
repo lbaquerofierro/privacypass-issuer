@@ -149,19 +149,19 @@ export class ConsoleLogger implements Logger {
 		// eslint-disable-next-line no-console
 		console.error(err.stack);
 	}
-	setTag(key: string, value: string): void {}
-	setSampleRate(sampleRate: number): void {}
-	addBreadcrumb(breadcrumb: Breadcrumb): void {}
+	setTag(key: string, value: string): void { }
+	setSampleRate(sampleRate: number): void { }
+	addBreadcrumb(breadcrumb: Breadcrumb): void { }
 	// eslint-disable-next-line @typescript-eslint/no-explicit-any
-	info(category: string, message: string, data?: { [key: string]: any }): void {}
+	info(category: string, message: string, data?: { [key: string]: any }): void { }
 }
 
 export class VoidLogger implements Logger {
-	setTag(key: string, value: string): void {}
-	setSampleRate(sampleRate: number): void {}
-	addBreadcrumb(breadcrumb: Breadcrumb): void {}
-	captureException(e: Error): void {}
-	info(category: string, message: string, data?: { [key: string]: any }): void {}
+	setTag(key: string, value: string): void { }
+	setSampleRate(sampleRate: number): void { }
+	addBreadcrumb(breadcrumb: Breadcrumb): void { }
+	captureException(e: Error): void { }
+	info(category: string, message: string, data?: { [key: string]: any }): void { }
 }
 /* eslint-enable */
 
@@ -250,9 +250,10 @@ export class WshimLogger {
 		const body = JSON.stringify({
 			logs: this.logs.map(log => ({ message: { ...defaultFields, ...log } })),
 		});
+		console.log('Flushing logs:', body);
 
 		try {
-			const response = await this.fetcher(this.loggingEndpoint, {
+			const response = await this.env.WSHIM_SOCKET?.fetch(this.loggingEndpoint, {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${this.serviceToken}` },
 				body,

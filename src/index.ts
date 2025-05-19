@@ -307,7 +307,7 @@ export const handleTokenDirectory = async (ctx: Context, request: Request) => {
 			'token-key': (key.customMetadata as StorageMetadata).publicKey,
 			'not-before': Number.parseInt(
 				(key.customMetadata as StorageMetadata).notBefore ??
-					(new Date(key.uploaded).getTime() / 1000).toFixed(0)
+				(new Date(key.uploaded).getTime() / 1000).toFixed(0)
 			),
 		})),
 	};
@@ -508,6 +508,9 @@ export class IssuerHandler extends WorkerEntrypoint<Bindings> {
 		const route = serviceInfo?.route ?? `/${op}`;
 		ctx.serviceInfo = serviceInfo;
 
+		ctx.wshimLogger.log(
+			`Handling ${op} request for ${serviceInfo.url} with prefix ${prefix} and route ${route}`
+		);
 		const start = ctx.performance.now();
 		try {
 			return await fn(ctx);
