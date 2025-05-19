@@ -190,15 +190,12 @@ export class WshimLogger {
 
 		this.serviceToken = env.LOGGING_SHIM_TOKEN;
 		this.sampleRate = sampleRate;
-		// this.fetcher = env.WSHIM_SOCKET?.fetch?.bind(env.WSHIM_SOCKET) ?? fetch;
 		const socket = env.WSHIM_SOCKET;
-		this.fetcher = (input: RequestInfo, init?: RequestInit) => {
-			if (socket && typeof socket.fetch === 'function') {
-				return socket.fetch.bind(socket)(input, init);
-			}
-			return fetch(input, init);
-		};
-
+		if (socket && typeof socket.fetch === 'function') {
+			this.fetcher = socket.fetch.bind(socket);
+		} else {
+			this.fetcher = globalThis.fetch.bind(globalThis);
+		}
 		this.loggingEndpoint = `${env.WSHIM_ENDPOINT}/log`;
 	}
 
@@ -208,7 +205,7 @@ export class WshimLogger {
 
 	private defaultFields() {
 		return {
-			'environment': this.env.ENVIRONMENT,
+			'env': this.env.ENVIRONMENT,
 			'http.host': this.request.url,
 			'http.user_agent': this.request.headers.get('User-Agent'),
 			'source_service': this.env.SERVICE,
@@ -255,7 +252,7 @@ export class WshimLogger {
 		});
 
 		try {
-			const response = await this.fetcher(this.loggingEndpoint, {
+			const response = await this.env.WSHIM_SOCKET.fetch(this.loggingEndpoint, {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${this.serviceToken}` },
 				body,

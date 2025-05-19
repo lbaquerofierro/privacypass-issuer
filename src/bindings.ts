@@ -30,6 +30,6 @@ export interface Bindings {
 
 	// telemetry
 	LOGGING_SHIM_TOKEN: string;
-	WSHIM_SOCKET?: Fetcher;
+	WSHIM_SOCKET: Fetcher;
 	WSHIM_ENDPOINT: string;
 }
